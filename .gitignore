@@ -1,0 +1,85 @@
+# macOS / editor noise
+.DS_Store
+._*
+.Spotlight-V100/
+.Trashes/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python caches and local tooling state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Local runtime scratch space
+.tmp/
+tmp/
+temp/
+logs/
+*.log
+
+# Browser profiles, cookies, tokens, and captured authenticated session data
+Cookies
+Cookies-journal
+cookies.txt
+*-cookies.txt
+*cookies.json
+*.cookies
+*.cookiejar
+*.har
+*.netscape
+*.secret
+*.secrets
+*.token
+*.tokens
+*.key
+*.pem
+*.p12
+*.crt
+*.cer
+*.env
+.env*
+!.env.example
+
+# Douyin pull outputs and private user content
+Douyin Favorites/
+douyin-favorites/
+拉取记录/
+笔记库/
+素材库/
+downloads/
+videos/
+audio/
+transcripts/
+details/
+cdp-details/
+models/
+*.mp4
+*.m4a
+*.mp3
+*.wav
+*.webm
+*.webp
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.srt
+*.vtt
+
+# Large/local ML model artifacts
+*.bin
+*.gguf
+*.onnx
+*.pt
+*.pth
+*.safetensors

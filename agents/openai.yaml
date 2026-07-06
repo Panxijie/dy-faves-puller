@@ -1,0 +1,4 @@
+interface:
+  display_name: "DY Faves2Notes"
+  short_description: "Turn Douyin favorites into local notes"
+  default_prompt: "Use $dy-faves2notes to fetch my first 10 Douyin favorites and write local Markdown notes."
