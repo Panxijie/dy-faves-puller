@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from note_metadata import (
@@ -197,10 +198,130 @@ def write_note(path: Path, meta: dict, summary: str, transcript: str) -> None:
     path.write_text(content + "\n", encoding="utf-8")
 
 
+def should_record_aweme_id(result: dict) -> bool:
+    return result.get("status") in {"ok", "note_only", "skipped_entertainment", "already_processed"}
+
+
+def process_item(
+    item: dict,
+    *,
+    output: Path,
+    cookies: Path,
+    model: Path | None,
+    transcribe_max_ms: int,
+    note_extracts: dict,
+    processed_aweme_ids: set[str],
+) -> dict:
+    idx = item["index"]
+    title = item.get("title") or item.get("source_url") or f"douyin-{idx:02d}"
+    item_aweme_id = extract_aweme_id(item)
+    prefix = f"{idx:02d}-{slugify(title, f'douyin-{idx:02d}')}"
+    result = {"index": idx, "source_url": item.get("source_url"), "title": title}
+    if item_aweme_id:
+        result["aweme_id"] = item_aweme_id
+    print(f"[{idx}] processing", flush=True)
+    try:
+        if item_aweme_id and item_aweme_id in processed_aweme_ids:
+            mark_previously_deleted(result, output, item_aweme_id)
+            print(f"[{idx}] already processed", flush=True)
+            return result
+        if not item.get("signed_detail_url") and not item.get("detail_json"):
+            note = note_extracts.get(idx, {})
+            text = note.get("text", "")
+            note_title = clean_title(note.get("title") or title, f"douyin-{idx:02d}")
+            if is_entertainment_item(title, note_title, text):
+                result.update({"status": "skipped_entertainment", "category": "影音与娱乐"})
+                return result
+            note_prefix = f"{idx:02d}-{slugify(note_title, f'douyin-{idx:02d}')}"
+            note_path = output / "notes" / f"{note_prefix}.md"
+            summary = simple_summary(note_title, note_title, text)
+            likes = leading_metric(title)
+            write_note(note_path, {
+                "source_url": item.get("source_url"),
+                "title": note_title,
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "content_type": "douyin_note",
+                "likes": likes,
+                "tags": extract_tags(note.get("title") or title),
+            }, summary, text)
+            result.update({"status": "note_only", "note": str(note_path)})
+            return result
+
+        detail_path = output / "details" / f"{prefix}.json"
+        data = load_detail(item, cookies, detail_path, item.get("source_url") or "https://www.douyin.com/")
+        aweme = data.get("aweme_detail") or {}
+        aweme_id = extract_aweme_id(aweme, item_aweme_id, item.get("source_url"))
+        if aweme_id:
+            result["aweme_id"] = aweme_id
+        if aweme_id and aweme_id in processed_aweme_ids:
+            mark_previously_deleted(result, output, aweme_id)
+            result.setdefault("detail_json", str(detail_path))
+            print(f"[{idx}] already processed", flush=True)
+            return result
+        video = aweme.get("video") or {}
+        desc = aweme.get("desc") or title
+        note_title = clean_title(desc, f"douyin-{aweme.get('aweme_id') or idx}")
+        if is_entertainment_item(title, desc, note_title, tags_from_aweme(aweme)):
+            result.update({
+                "status": "skipped_entertainment",
+                "category": "影音与娱乐",
+                "detail_json": str(detail_path),
+                "note_title": note_title,
+            })
+            print(f"[{idx}] skipped entertainment", flush=True)
+            return result
+        play_url = url_from_video(video)
+        if not play_url:
+            raise RuntimeError("No video URL in detail JSON")
+        video_path = output / "downloads" / f"{prefix}.mp4"
+        audio_path = output / "audio" / f"{prefix}.wav"
+        transcript_base = output / "transcripts" / prefix
+        note_prefix = f"{idx:02d}-{slugify(note_title, f'douyin-{idx:02d}')}"
+        note_path = output / "notes" / f"{note_prefix}.md"
+        curl_download(play_url, cookies, video_path, item.get("source_url") or "https://www.douyin.com/")
+        print(f"[{idx}] downloaded", flush=True)
+        extract_audio(video_path, audio_path)
+        transcript = transcribe(audio_path, transcript_base, model, transcribe_max_ms)
+        print(f"[{idx}] transcribed", flush=True)
+        summary = simple_summary(title, desc, transcript)
+        write_note(note_path, {
+            "source_url": item.get("source_url"),
+            "title": note_title,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "content_type": "douyin_video",
+            "video_path": video_path,
+            "audio_path": audio_path,
+            "detail_json": detail_path,
+            "transcript_path": Path(f"{transcript_base}.txt"),
+            "duration_ms": aweme.get("duration") or video.get("duration"),
+            **stats_from_aweme(aweme),
+            "tags": tags_from_aweme(aweme),
+        }, summary, transcript)
+        result.update({
+            "status": "ok",
+            "aweme_id": result.get("aweme_id"),
+            "detail_json": str(detail_path),
+            "video": str(video_path),
+            "audio": str(audio_path),
+            "transcript": str(Path(f"{transcript_base}.txt")),
+            "note": str(note_path),
+        })
+    except Exception as exc:
+        result.update({"status": "error", "error": str(exc)})
+        print(f"[{idx}] error: {exc}", flush=True)
+    return result
+
+
+def write_manifest(manifest_path: Path, manifest: list[dict]) -> None:
+    manifest.sort(key=lambda old: old.get("index", 10**9))
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--signed-details", required=True, type=Path)
     parser.add_argument("--note-extracts", type=Path)
+    parser.add_argument("--indices", nargs="*", type=int, help="Only process these manifest indices.")
     parser.add_argument("--cookies", required=True, type=Path)
     parser.add_argument("--output", default=Path("Douyin Favorites"), type=Path)
     parser.add_argument("--model", type=Path)
@@ -208,6 +329,8 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, help="Manifest path. Defaults to <output>/run_manifest.json.")
     parser.add_argument("--merge-manifest", action="store_true", help="Merge results into an existing manifest by index.")
     parser.add_argument("--keep-success", action="store_true", help="Do not replace an existing ok/note_only manifest entry with an error.")
+    parser.add_argument("--defer-registry", action="store_true", help="Do not write aweme_ids.txt; useful for sub-agent shard manifests that the parent will merge.")
+    parser.add_argument("--max-workers", type=int, default=1, help="Maximum concurrent item workers after detail capture. Default: 1.")
     args = parser.parse_args()
 
     output = args.output
@@ -216,6 +339,9 @@ def main() -> int:
         (output / name).mkdir(parents=True, exist_ok=True)
 
     signed = json.loads(args.signed_details.read_text(encoding="utf-8"))
+    wanted_indices = set(args.indices or [])
+    if wanted_indices:
+        signed = [item for item in signed if int(item.get("index", 0)) in wanted_indices]
     note_extracts = {}
     if args.note_extracts and args.note_extracts.exists():
         note_extracts = {item["index"]: item for item in json.loads(args.note_extracts.read_text(encoding="utf-8"))}
@@ -227,139 +353,53 @@ def main() -> int:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception:
             manifest = []
-    for item in signed:
-        idx = item["index"]
-        title = item.get("title") or item.get("source_url") or f"douyin-{idx:02d}"
-        item_aweme_id = extract_aweme_id(item)
-        prefix = f"{idx:02d}-{slugify(title, f'douyin-{idx:02d}')}"
-        result = {"index": idx, "source_url": item.get("source_url"), "title": title}
-        if item_aweme_id:
-            result["aweme_id"] = item_aweme_id
-        print(f"[{idx}] processing", flush=True)
-        try:
-            if item_aweme_id and item_aweme_id in processed_aweme_ids:
-                mark_previously_deleted(result, output, item_aweme_id)
-                print(f"[{idx}] already processed", flush=True)
-                manifest = [old for old in manifest if old.get("index") != idx]
-                manifest.append(result)
-                manifest.sort(key=lambda old: old.get("index", 10**9))
-                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-                continue
-            if not item.get("signed_detail_url") and not item.get("detail_json"):
-                note = note_extracts.get(idx, {})
-                text = note.get("text", "")
-                note_title = clean_title(note.get("title") or title, f"douyin-{idx:02d}")
-                if is_entertainment_item(title, note_title, text):
-                    result.update({"status": "skipped_entertainment", "category": "影音与娱乐"})
-                    add_aweme_id(output, result.get("aweme_id"))
-                    processed_aweme_ids = load_aweme_ids(output)
-                    manifest = [old for old in manifest if old.get("index") != idx]
-                    manifest.append(result)
-                    manifest.sort(key=lambda old: old.get("index", 10**9))
-                    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-                    continue
-                note_prefix = f"{idx:02d}-{slugify(note_title, f'douyin-{idx:02d}')}"
-                note_path = output / "notes" / f"{note_prefix}.md"
-                summary = simple_summary(note_title, note_title, text)
-                likes = leading_metric(title)
-                write_note(note_path, {
-                    "source_url": item.get("source_url"),
-                    "title": note_title,
-                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "content_type": "douyin_note",
-                    "likes": likes,
-                    "tags": extract_tags(note.get("title") or title),
-                }, summary, text)
-                result.update({"status": "note_only", "note": str(note_path)})
-                add_aweme_id(output, result.get("aweme_id"))
-                processed_aweme_ids = load_aweme_ids(output)
-                manifest.append(result)
-                continue
-
-            detail_path = output / "details" / f"{prefix}.json"
-            data = load_detail(item, args.cookies, detail_path, item.get("source_url") or "https://www.douyin.com/")
-            aweme = data.get("aweme_detail") or {}
-            aweme_id = extract_aweme_id(aweme, item_aweme_id, item.get("source_url"))
-            if aweme_id:
-                result["aweme_id"] = aweme_id
-            if aweme_id and aweme_id in processed_aweme_ids:
-                mark_previously_deleted(result, output, aweme_id)
-                result.setdefault("detail_json", str(detail_path))
-                print(f"[{idx}] already processed", flush=True)
-                manifest = [old for old in manifest if old.get("index") != idx]
-                manifest.append(result)
-                manifest.sort(key=lambda old: old.get("index", 10**9))
-                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-                continue
-            video = aweme.get("video") or {}
-            desc = aweme.get("desc") or title
-            note_title = clean_title(desc, f"douyin-{aweme.get('aweme_id') or idx}")
-            if is_entertainment_item(title, desc, note_title, tags_from_aweme(aweme)):
-                result.update({
-                    "status": "skipped_entertainment",
-                    "category": "影音与娱乐",
-                    "detail_json": str(detail_path),
-                    "note_title": note_title,
-                })
-                add_aweme_id(output, result.get("aweme_id"))
-                processed_aweme_ids = load_aweme_ids(output)
-                print(f"[{idx}] skipped entertainment", flush=True)
-                manifest = [old for old in manifest if old.get("index") != idx]
-                manifest.append(result)
-                manifest.sort(key=lambda old: old.get("index", 10**9))
-                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-                continue
-            play_url = url_from_video(video)
-            if not play_url:
-                raise RuntimeError("No video URL in detail JSON")
-            video_path = output / "downloads" / f"{prefix}.mp4"
-            audio_path = output / "audio" / f"{prefix}.wav"
-            transcript_base = output / "transcripts" / prefix
-            note_prefix = f"{idx:02d}-{slugify(note_title, f'douyin-{idx:02d}')}"
-            note_path = output / "notes" / f"{note_prefix}.md"
-            curl_download(play_url, args.cookies, video_path, item.get("source_url") or "https://www.douyin.com/")
-            print(f"[{idx}] downloaded", flush=True)
-            extract_audio(video_path, audio_path)
-            transcript = transcribe(audio_path, transcript_base, args.model, args.transcribe_max_ms)
-            print(f"[{idx}] transcribed", flush=True)
-            summary = simple_summary(title, desc, transcript)
-            write_note(note_path, {
-                "source_url": item.get("source_url"),
-                "title": note_title,
-                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "content_type": "douyin_video",
-                "video_path": video_path,
-                "audio_path": audio_path,
-                "detail_json": detail_path,
-                "transcript_path": Path(f"{transcript_base}.txt"),
-                "duration_ms": aweme.get("duration") or video.get("duration"),
-                **stats_from_aweme(aweme),
-                "tags": tags_from_aweme(aweme),
-            }, summary, transcript)
-            result.update({
-                "status": "ok",
-                "aweme_id": result.get("aweme_id"),
-                "detail_json": str(detail_path),
-                "video": str(video_path),
-                "audio": str(audio_path),
-                "transcript": str(Path(f"{transcript_base}.txt")),
-                "note": str(note_path),
-            })
-            add_aweme_id(output, result.get("aweme_id"))
-            processed_aweme_ids = load_aweme_ids(output)
-        except Exception as exc:
-            result.update({"status": "error", "error": str(exc)})
-            print(f"[{idx}] error: {exc}", flush=True)
+    def merge_result(result: dict) -> None:
+        nonlocal manifest
+        idx = result["index"]
         previous = next((old for old in manifest if old.get("index") == idx), None)
         if args.keep_success and previous and previous.get("status") in {"ok", "note_only"} and result.get("status") == "error":
             result = previous
         manifest = [old for old in manifest if old.get("index") != idx]
         manifest.append(result)
-        manifest.sort(key=lambda old: old.get("index", 10**9))
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        if should_record_aweme_id(result) and not args.defer_registry:
+            add_aweme_id(output, result.get("aweme_id"))
+            if result.get("aweme_id"):
+                processed_aweme_ids.add(result["aweme_id"])
+        write_manifest(manifest_path, manifest)
 
-    manifest.sort(key=lambda old: old.get("index", 10**9))
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    worker_count = max(1, min(args.max_workers, len(signed)))
+    if worker_count > 1:
+        print(f"Processing with up to {worker_count} concurrent workers.", flush=True)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [
+                executor.submit(
+                    process_item,
+                    item,
+                    output=output,
+                    cookies=args.cookies,
+                    model=args.model,
+                    transcribe_max_ms=args.transcribe_max_ms,
+                    note_extracts=note_extracts,
+                    processed_aweme_ids=processed_aweme_ids,
+                )
+                for item in signed
+            ]
+            for future in as_completed(futures):
+                merge_result(future.result())
+    else:
+        for item in signed:
+            result = process_item(
+                item,
+                output=output,
+                cookies=args.cookies,
+                model=args.model,
+                transcribe_max_ms=args.transcribe_max_ms,
+                note_extracts=note_extracts,
+                processed_aweme_ids=processed_aweme_ids,
+            )
+            merge_result(result)
+
+    write_manifest(manifest_path, manifest)
     return 0
 
 

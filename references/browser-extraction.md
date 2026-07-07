@@ -107,7 +107,9 @@ PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
   --manifest "Douyin Favorites/拉取记录/<pull-id>/json/cdp-capture-manifest.json"
 ```
 
-Process the captured response bodies. `process_signed_details.py` requires a Netscape cookie-file argument; start with a non-sensitive empty file because captured signed media URLs often download without cookies:
+Process the captured response bodies. Once all detail JSON has been captured, prefer Codex sub-agents over local threads/processes for per-video work. Use a conservative cap such as 2 or 3 sub-agents, assign each worker disjoint `--indices`, and have each worker write its own shard manifest with `--defer-registry`. Each worker should run both `process_signed_details.py` and `summarize_notes_with_model.py` on its shard manifest. The parent agent should merge shard manifests, update the global registry after verification, then run the final organization/index pass. `--max-workers` remains available as a local fallback when sub-agents are unavailable.
+
+`process_signed_details.py` requires a Netscape cookie-file argument; start with a non-sensitive empty file because captured signed media URLs often download without cookies:
 
 ```bash
 printf '# Netscape HTTP Cookie File\n' \

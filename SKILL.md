@@ -111,7 +111,35 @@ PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
 
 If sandboxing blocks `127.0.0.1:9222` with `Operation not permitted`, rerun the same command with escalated permission. Do not print cookies or signed URLs.
 
-8. Process the captured detail bodies into local videos, audio, transcripts, draft notes, and a corrected manifest. `process_signed_details.py` must classify each detail JSON before downloading media; entertainment items should become `skipped_entertainment` with no video/audio/transcript asset. The script requires a Netscape cookies file argument even when the captured signed media URLs do not need cookies; create a non-sensitive empty file inside the pull record:
+8. Process the captured detail bodies into local videos, audio, transcripts, draft notes, and a corrected manifest. `process_signed_details.py` must classify each detail JSON before downloading media; entertainment items should become `skipped_entertainment` with no video/audio/transcript asset.
+
+After all detail JSON has been captured, prefer Codex sub-agents for the expensive per-video work when the environment exposes multi-agent tools. Set a conservative sub-agent cap first, usually `2` or `3`, because local transcription and model summarization are CPU/API-heavy. The parent agent should split disjoint index ranges, give each worker a shard manifest path, and keep final organization/indexing local to the parent. Workers must not share a manifest path and should use `--defer-registry`; the parent merges shard manifests into `run_manifest.json`, updates `aweme_ids.txt`, verifies resources/metadata, then runs the final organization/index pass.
+
+Example worker commands for a sub-agent shard:
+
+```bash
+PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
+  "Codex Skills/dy-faves2notes/scripts/process_signed_details.py" \
+  --signed-details "Douyin Favorites/拉取记录/<pull-id>/json/cdp-capture-manifest.json" \
+  --indices 2 3 4 \
+  --cookies "Douyin Favorites/拉取记录/<pull-id>/json/empty-cookies.txt" \
+  --output "Douyin Favorites" \
+  --model "Douyin Favorites/models/ggml-base.bin" \
+  --transcribe-max-ms 0 \
+  --manifest "Douyin Favorites/拉取记录/<pull-id>/json/run_manifest-agent-1.json" \
+  --defer-registry \
+  --merge-manifest \
+  --keep-success
+
+python3 "Codex Skills/dy-faves2notes/scripts/summarize_notes_with_model.py" \
+  --manifest "Douyin Favorites/拉取记录/<pull-id>/json/run_manifest-agent-1.json"
+```
+
+Each worker should report its shard manifest path and any failed indices. The parent agent then merges all `run_manifest-agent-*.json` records into the canonical `run_manifest.json`, preserving stable order by `index`; records from shard manifests should replace matching placeholder/error records from the canonical manifest unless `--keep-success` preserved a prior successful item. Only after merge should the parent append eligible aweme IDs to `拉取记录/aweme_ids.txt`.
+
+If sub-agents are not available, process locally with the normal command. `--max-workers` is available as a fallback local worker cap, but it is not a substitute for Codex sub-agents.
+
+The script requires a Netscape cookies file argument even when the captured signed media URLs do not need cookies; create a non-sensitive empty file inside the pull record:
 
 ```bash
 printf '# Netscape HTTP Cookie File\n' \
