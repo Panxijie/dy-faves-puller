@@ -28,6 +28,7 @@ logs/
 *.log
 
 # Browser profiles, cookies, tokens, and captured authenticated session data
+summary_model_config.json
 Cookies
 Cookies-journal
 cookies.txt

@@ -211,12 +211,41 @@ print("Draft metadata verified.")
 PY
 ```
 
-10. Read the complete transcript paths listed in `run_manifest.json`, not stale similarly named files from earlier failed attempts. Rewrite only the note body from transcript content and save the rewritten Markdown back to each manifest item's `note` path before organizing. Preserve existing YAML frontmatter from the draft note, including statistics and tags:
+10. Read the complete transcript paths listed in `run_manifest.json`, not stale similarly named files from earlier failed attempts. Rewrite only the note body from transcript content and save the rewritten Markdown back to each manifest item's `note` path before organizing. Preserve existing YAML frontmatter from the draft note, including statistics and tags.
+
+By default, use the configurable summary model script rather than Codex hand-written summaries. Unless the user explicitly asks to use Codex/manual summaries or to stay offline, treat this configured model as the default summarizer for final note rewriting.
+
+The model API URL, model name, API key source, and generation parameters come from `Codex Skills/dy-faves2notes/summary_model_config.json`. The fixed summarization requirements live in `Codex Skills/dy-faves2notes/summary_prompt.md`. Future summary style or content-requirement changes should normally be made in `summary_prompt.md`, not improvised by Codex at runtime.
+
+```json
+{
+  "provider": "openai_compatible",
+  "base_url": "https://api.deepseek.com",
+  "endpoint": "/chat/completions",
+  "api_key_env": "DEEPSEEK_API_KEY",
+  "api_key": "",
+  "model": "deepseek-v4-pro",
+  "prompt_path": "summary_prompt.md",
+  "temperature": 0.2,
+  "max_tokens": 4096,
+  "timeout_seconds": 120
+}
+```
+
+After transcription and metadata verification pass, run the configured model summarizer:
+
+```bash
+python3 "Codex Skills/dy-faves2notes/scripts/summarize_notes_with_model.py" \
+  --manifest "Douyin Favorites/拉取记录/<pull-id>/json/run_manifest.json"
+```
+
+This sends local transcript text and note metadata to the API configured in `summary_model_config.json`; do not print API keys or request/response bodies containing private content. The model-generated note body must still satisfy:
 
 - `## 摘要`: one concise orientation paragraph of 50 Chinese characters or fewer.
 - `## 详细内容`: follow the video's order and retain reasoning, intermediate steps, demonstrations, examples, names, numbers, settings, and comparisons.
 - Topic-specific sections such as tools, procedures, arguments, or cases when they improve scanning.
 - `## 注意事项`: separate the video's claims from verified facts and note uncertainty or transcription ambiguity.
+- The model prompt is the fixed text in `summary_prompt.md`; the user prompt should only add per-video metadata and transcript content.
 
 Entertainment/music items should not be downloaded or summarized unless the user explicitly asks to keep entertainment assets. Non-entertainment visual/lifestyle items may be downloaded and summarized when they contain informational guidance; if the transcript is weak, note the uncertainty.
 
@@ -357,6 +386,7 @@ python3 "Codex Skills/dy-faves2notes/scripts/migrate_note_names.py" --output "Do
 Optional:
 
 - `OPENAI_API_KEY` plus the explicit script flag `--use-openai` for OpenAI audio transcription and Markdown summarization. Never use `--use-openai` unless the user has approved uploading downloaded audio/transcript text to OpenAI. The script uses `gpt-4o-mini-transcribe` for audio and `gpt-4.1` for summaries by default; override with `OPENAI_TRANSCRIBE_MODEL` and `OPENAI_SUMMARY_MODEL`.
+- A configured OpenAI-compatible summary API in `Codex Skills/dy-faves2notes/summary_model_config.json` for final note rewriting after local transcription. This configured model is the default final summarizer unless the user explicitly asks to use Codex/manual summaries or an offline-only workflow.
 - Local `whisper-cli` from `whisper-cpp` plus a GGML model for offline transcription.
 
 ## Output Layout
