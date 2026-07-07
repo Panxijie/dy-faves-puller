@@ -128,6 +128,44 @@ def transcribe(audio: Path, transcript_base: Path, model: Path | None, max_ms: i
     return txt.read_text(encoding="utf-8", errors="ignore").strip() if txt.exists() else ""
 
 
+def existing_processed_entry(output: Path, aweme_id: str | None) -> dict | None:
+    if not aweme_id:
+        return None
+    manifests = sorted((output / "拉取记录").glob("*/json/run_manifest.json"), reverse=True)
+    for manifest_path in manifests:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for item in manifest:
+            if item.get("aweme_id") != aweme_id or item.get("status") not in {"ok", "note_only", "already_processed"}:
+                continue
+            required = ["note"]
+            if item.get("status") == "ok" and item.get("content_type") != "note":
+                required.extend(["video", "transcript"])
+            if all(item.get(key) and Path(item[key]).exists() for key in required):
+                reused = {key: value for key, value in item.items() if key in {
+                    "status", "detail_json", "video", "audio", "transcript", "note", "content_type",
+                    "duration", "duration_ms", "note_title", "original_title", "category", "subcategory",
+                } and value}
+                reused["reused_from_manifest"] = str(manifest_path)
+                return reused
+    return None
+
+
+def mark_previously_deleted(result: dict, output: Path, aweme_id: str | None) -> dict:
+    reused = existing_processed_entry(output, aweme_id)
+    if reused:
+        result.update(reused)
+        return result
+    result.update({
+        "status": "already_processed",
+        "manual_deleted": True,
+        "skip_reason": "aweme_id is marked processed, but local note/assets are missing; treating it as user-deleted and not reprocessing.",
+    })
+    return result
+
+
 def simple_summary(title: str, desc: str, transcript: str) -> str:
     clean = re.sub(r"\s+", " ", transcript).strip()
     if clean:
@@ -200,7 +238,7 @@ def main() -> int:
         print(f"[{idx}] processing", flush=True)
         try:
             if item_aweme_id and item_aweme_id in processed_aweme_ids:
-                result.update({"status": "already_processed"})
+                mark_previously_deleted(result, output, item_aweme_id)
                 print(f"[{idx}] already processed", flush=True)
                 manifest = [old for old in manifest if old.get("index") != idx]
                 manifest.append(result)
@@ -245,7 +283,8 @@ def main() -> int:
             if aweme_id:
                 result["aweme_id"] = aweme_id
             if aweme_id and aweme_id in processed_aweme_ids:
-                result.update({"status": "already_processed", "detail_json": str(detail_path)})
+                mark_previously_deleted(result, output, aweme_id)
+                result.setdefault("detail_json", str(detail_path))
                 print(f"[{idx}] already processed", flush=True)
                 manifest = [old for old in manifest if old.get("index") != idx]
                 manifest.append(result)

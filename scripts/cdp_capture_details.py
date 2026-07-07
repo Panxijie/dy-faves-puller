@@ -71,6 +71,16 @@ def existing_tab(port: int, source_url: str) -> dict | None:
     return matches[-1] if matches else None
 
 
+def close_tab(port: int, tab: dict) -> None:
+    tab_id = tab.get("id")
+    if not tab_id:
+        return
+    try:
+        requests.get(f"http://127.0.0.1:{port}/json/close/{tab_id}", timeout=5)
+    except requests.RequestException:
+        pass
+
+
 def capture_one(port: int, item: dict, index: int, output_dir: Path, timeout: int) -> dict:
     source_url = item["url"]
     aweme_id = re.search(r"/(?:video|note)/(\d+)", source_url)
@@ -178,6 +188,7 @@ def capture_one(port: int, item: dict, index: int, output_dir: Path, timeout: in
         }
     finally:
         cdp.close()
+        close_tab(port, tab)
 
 
 def main() -> int:

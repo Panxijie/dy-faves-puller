@@ -11,7 +11,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from note_metadata import compact_content_type, compact_count, render_frontmatter, split_frontmatter
+from note_metadata import compact_content_type, compact_count, render_frontmatter, split_frontmatter, stats_from_aweme, tags_from_aweme
 from update_note_index import write_index
 
 
@@ -19,7 +19,7 @@ CATEGORY_RULES = [
     ("影音与娱乐", r"相声|曲艺|影视|美剧|电影|剧集|综艺|脱口秀|播客|说唱|音乐|歌曲|MV|演出|娱乐"),
     ("科研与学习", r"科研|论文|学术|基金申报|文献|学习方法|课程|教育"),
     ("情感与关系", r"恋爱|择偶|爱情|情感|婚姻|伴侣|NPD|人格|亲密关系"),
-    ("生活与职场", r"职场|求职|工作经验|生活经验|消费|购物|健康"),
+    ("生活与职场", r"职场|求职|面试|HR|工作经验|生活经验|消费|购物|健康"),
     ("技术与工具", r"Codex|AI|Agent|Skill|插件|模型|软件|工具|电脑|VPN|零信任|网络|编程|服务器|NAS"),
 ]
 
@@ -47,6 +47,8 @@ def classify(title: str, tags: list[str], body: str) -> tuple[str, str]:
     if category == "影音与娱乐":
         return category, "相声曲艺" if re.search(r"相声|曲艺", primary, re.I) else "影视片段"
     if category == "生活与职场":
+        if re.search(r"面试|HR", primary, re.I):
+            return category, "面试表达"
         return category, "职场技能" if re.search(r"职场|求职|工作", primary, re.I) else "生活经验"
     return category, "待分类"
 
@@ -127,6 +129,50 @@ def move_file(source_value: str | None, target: Path, apply: bool) -> str | None
         target.parent.mkdir(parents=True, exist_ok=True)
         source.replace(target)
     return str(target)
+
+
+def find_aweme(value: object, predicate) -> dict | None:
+    if isinstance(value, dict):
+        if predicate(value):
+            return value
+        for child in value.values():
+            found = find_aweme(child, predicate)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = find_aweme(child, predicate)
+            if found:
+                return found
+    return None
+
+
+def stats_from_detail_json(path: str | None) -> dict[str, int]:
+    if not path:
+        return {}
+    detail_path = Path(path)
+    if not detail_path.exists():
+        return {}
+    try:
+        data = json.loads(detail_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    aweme = find_aweme(data, lambda item: isinstance(item.get("statistics"), dict))
+    return stats_from_aweme(aweme or {})
+
+
+def tags_from_detail_json(path: str | None) -> list[str]:
+    if not path:
+        return []
+    detail_path = Path(path)
+    if not detail_path.exists():
+        return []
+    try:
+        data = json.loads(detail_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    aweme = find_aweme(data, lambda item: "text_extra" in item or "desc" in item)
+    return tags_from_aweme(aweme or {})
 
 
 def ffprobe_duration_ms(path: Path) -> int | None:
@@ -232,6 +278,13 @@ def build_meta(
     skipped = meta.get("transcription_skipped")
     if isinstance(skipped, str):
         skipped = skipped.lower() == "true"
+    detail_stats = stats_from_detail_json(moved.get("detail_json") or meta.get("detail_json"))
+    for key, value in detail_stats.items():
+        if key in {"likes", "comments", "favorites", "shares"} and compact_count(meta.get(key)) is None:
+            meta[key] = value
+    detail_tags = tags_from_detail_json(moved.get("detail_json") or meta.get("detail_json"))
+    if detail_tags and not meta.get("tags"):
+        meta["tags"] = detail_tags
     return {
         "source_url": meta.get("source_url"),
         "created_at": meta.get("created_at"),

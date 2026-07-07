@@ -55,6 +55,8 @@ If the returned list is empty but the page visibly shows favorites, inspect the 
 
 Use this when `yt-dlp` cannot produce local MP4 files, including after `--cookies-from-browser chrome`. Do not replace this with page-title or visible-text summaries; the CDP path is what turns browser-visible non-entertainment videos into local video resources. Entertainment items are still classified and skipped before media download.
 
+The captured detail response is the canonical source for engagement metadata and hashtags. Preserve `aweme.statistics` as `likes`, `comments`, `favorites`, and `shares`; preserve structured `text_extra` hashtags and hashtags in `desc` as final note `tags`. Do this before final summary rewriting, not as a later repair step.
+
 Use this only after the user explicitly approves launching a debuggable browser.
 
 Preferred authentication path: ask for permission to read existing Chrome Douyin cookies, then export them into the pull record:
@@ -124,13 +126,21 @@ PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
 
 If download fails with the empty file, ask before using an exported real cookie file and rerun with `--cookies "Douyin Favorites/douyin-cookies.txt"`.
 
-Verify local videos before summarizing:
+Verify local videos and detail-derived metadata before summarizing. Entertainment records should be `skipped_entertainment` and have no media assets. Non-entertainment video records must have local media. For every `ok` item whose detail JSON includes `aweme.statistics` or hashtags, the draft note frontmatter must already contain non-empty engagement fields and tags. Fix capture/processing before writing final summaries.
 
 ```bash
 python3 - <<'PY'
 import json, pathlib, subprocess
 m = json.load(open("Douyin Favorites/拉取记录/<pull-id>/json/run_manifest.json", encoding="utf-8"))
 for item in m:
+    if item.get("status") == "skipped_entertainment":
+        if item.get("video") or item.get("audio") or item.get("transcript"):
+            raise SystemExit(f"Entertainment item has media assets: {item.get('index')}")
+        continue
+    if item.get("status") not in {"ok", "note_only", "already_processed"}:
+        raise SystemExit(f"Unresolved item status: {item.get('index')} {item.get('status')}")
+    if item.get("content_type") == "note" and not item.get("video"):
+        continue
     video = pathlib.Path(item["video"])
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration,size", "-of", "default=nw=1", str(video)],
