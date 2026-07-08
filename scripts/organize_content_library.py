@@ -11,15 +11,23 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from douyin_layout import (
+    DEFAULT_OUTPUT,
+    asset_dir,
+    assert_current_review_empty,
+    ensure_review_dirs,
+    manifest_candidates,
+    pulls_root,
+    review_current,
+)
 from note_metadata import compact_content_type, compact_count, render_frontmatter, split_frontmatter, stats_from_aweme, tags_from_aweme
-from update_note_index import write_index
 
 
 CATEGORY_RULES = [
     ("影音与娱乐", r"相声|曲艺|影视|美剧|电影|剧集|综艺|脱口秀|播客|说唱|音乐|歌曲|MV|演出|娱乐"),
     ("科研与学习", r"科研|论文|学术|基金申报|文献|学习方法|课程|教育"),
     ("情感与关系", r"恋爱|择偶|爱情|情感|婚姻|伴侣|NPD|人格|亲密关系"),
-    ("生活与职场", r"职场|求职|面试|HR|工作经验|生活经验|消费|购物|健康"),
+    ("生活与职场", r"职场|求职|就业|职业选择|职业规划|岗位|面试|HR|工作经验|生活经验|消费|购物|健康"),
     ("技术与工具", r"Codex|AI|Agent|Skill|插件|模型|软件|工具|电脑|VPN|零信任|网络|编程|服务器|NAS"),
 ]
 
@@ -49,6 +57,8 @@ def classify(title: str, tags: list[str], body: str) -> tuple[str, str]:
     if category == "生活与职场":
         if re.search(r"面试|HR", primary, re.I):
             return category, "面试表达"
+        if re.search(r"就业|职业|岗位", primary, re.I):
+            return category, "职业规划"
         return category, "职场技能" if re.search(r"职场|求职|工作", primary, re.I) else "生活经验"
     return category, "待分类"
 
@@ -59,7 +69,7 @@ def find_manifest(output: Path, explicit: Path | None) -> Path:
     root = output / "run_manifest.json"
     if root.exists():
         return root
-    candidates = sorted((output / "拉取记录").glob("*/json/run_manifest.json"))
+    candidates = sorted(manifest_candidates(output))
     if candidates:
         return candidates[-1]
     raise FileNotFoundError("No run_manifest.json found")
@@ -94,6 +104,13 @@ def summary_title(item: dict, meta: dict, fallback: str, overrides: dict[str, st
 
 
 def iter_existing_note_names(output: Path, category: str) -> list[Path]:
+    review_paths: list[Path] = []
+    for root in (output / "review" / "archive", output / "review" / "current"):
+        note_root = root / category
+        if note_root.exists():
+            review_paths.extend(sorted(note_root.glob("*.md")))
+    if review_paths:
+        return sorted(review_paths)
     note_root = output / "笔记库" / category
     if note_root.exists():
         return sorted(note_root.glob("*.md"))
@@ -271,6 +288,9 @@ def build_meta(
     subcategory: str,
     pulled_at: datetime,
     sequence: int,
+    pull_id: str,
+    manifest_item_index: int,
+    aweme_id: str | None,
     record_dir: Path,
     moved: dict[str, str],
     duration: str | None,
@@ -287,12 +307,16 @@ def build_meta(
         meta["tags"] = detail_tags
     return {
         "source_url": meta.get("source_url"),
+        "aweme_id": aweme_id,
+        "pull_id": pull_id,
+        "pulled_at": pulled_at.strftime("%Y-%m-%d %H:%M"),
+        "manifest_item_index": manifest_item_index,
+        "promoted": False,
         "created_at": meta.get("created_at"),
         "content_type": compact_content_type(meta.get("content_type")),
         "original_title": meta.get("original_title") or original_title,
         "category": category,
         "subcategory": subcategory,
-        "pulled_at": pulled_at.strftime("%Y-%m-%d %H:%M"),
         "category_sequence": sequence,
         "duration": duration,
         "likes": compact_count(meta.get("likes")),
@@ -324,7 +348,7 @@ def cleanup_empty_dirs(paths: list[Path], output: Path, apply: bool) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=Path("Douyin Favorites"))
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--pulled-at", help="Pull start time in YYYY-MM-DD HH:MM format.")
     parser.add_argument("--favorites-json", type=Path)
@@ -334,16 +358,18 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="Apply moves. Default is a preview.")
     args = parser.parse_args()
 
+    if args.apply:
+        assert_current_review_empty(args.output)
+        ensure_review_dirs(args.output)
     manifest_path = find_manifest(args.output, args.manifest)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     title_overrides = load_title_overrides(args.note_title_overrides)
     pulled_at = parse_pulled_at(args.pulled_at, manifest, manifest_path)
     pull_date = pulled_at.strftime("%Y-%m-%d")
-    record_dir = args.output / "拉取记录" / pulled_at.strftime("%Y-%m-%d_%H-%M")
+    record_dir = pulls_root(args.output) / pulled_at.strftime("%Y-%m-%d_%H-%M")
     json_dir = record_dir / "json"
     detail_dir = json_dir / "details"
-    note_root = args.output / "笔记库"
-    asset_root = args.output / "素材库"
+    note_root = review_current(args.output)
     current_notes = {Path(item["note"]).resolve() for item in manifest if item.get("note") and Path(item["note"]).exists()}
     category_sequences: dict[str, int] = {}
     planned_targets: set[Path] = set()
@@ -375,10 +401,10 @@ def main() -> int:
         print(f"[{pull_date} {category} #{sequence:02d}] {subcategory} -> {note_target}")
 
         destinations = {
-            "video": asset_root / f"{stem}-video{Path(item['video']).suffix}" if item.get("video") else None,
-            "audio": asset_root / f"{stem}-audio{Path(item['audio']).suffix}" if item.get("audio") else None,
-            "transcript": asset_root / f"{stem}-transcript.txt" if item.get("transcript") else None,
-            "image": asset_root / f"{stem}-image{Path(item['image']).suffix}" if item.get("image") else None,
+            "video": asset_dir(args.output, "video") / f"{stem}-video{Path(item['video']).suffix}" if item.get("video") else None,
+            "audio": asset_dir(args.output, "audio") / f"{stem}-audio{Path(item['audio']).suffix}" if item.get("audio") else None,
+            "transcript": asset_dir(args.output, "transcript") / f"{stem}-transcript.txt" if item.get("transcript") else None,
+            "image": asset_dir(args.output, "image") / f"{stem}-image{Path(item['image']).suffix}" if item.get("image") else None,
             "detail_json": detail_dir / f"{stem}.json" if item.get("detail_json") else None,
         }
         moved: dict[str, str] = {}
@@ -397,6 +423,9 @@ def main() -> int:
             subcategory=subcategory,
             pulled_at=pulled_at,
             sequence=sequence,
+            pull_id=record_dir.name,
+            manifest_item_index=index,
+            aweme_id=item.get("aweme_id"),
             record_dir=record_dir,
             moved=moved,
             duration=duration,
@@ -419,12 +448,13 @@ def main() -> int:
             "note": str(note_target),
             "bundle": str(note_target.parent),
             "note_root": str(note_root),
-            "asset_root": str(asset_root),
+            "asset_root": str(asset_dir(args.output, "video").parent),
             "note_title": note_title,
             "original_title": original_title,
             "category": category,
             "subcategory": subcategory,
             "pulled_at": pulled_at.strftime("%Y-%m-%d %H:%M"),
+            "pull_id": record_dir.name,
             "pull_date": pull_date,
             "daily_sequence": sequence,
             "category_sequence": sequence,
@@ -449,7 +479,6 @@ def main() -> int:
         if manifest_path.resolve() != target_manifest.resolve():
             manifest_path.unlink()
         cleanup_empty_dirs(cleanup_candidates, args.output, True)
-        write_index(args.output)
     else:
         print(f"Pull record -> {record_dir}")
         print("Preview only; rerun with --apply to organize files.")

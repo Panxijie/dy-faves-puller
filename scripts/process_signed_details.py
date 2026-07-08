@@ -12,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from douyin_layout import DEFAULT_OUTPUT, assert_current_review_empty, manifest_candidates
 from note_metadata import (
     add_aweme_id,
     clean_title,
@@ -132,7 +133,7 @@ def transcribe(audio: Path, transcript_base: Path, model: Path | None, max_ms: i
 def existing_processed_entry(output: Path, aweme_id: str | None) -> dict | None:
     if not aweme_id:
         return None
-    manifests = sorted((output / "拉取记录").glob("*/json/run_manifest.json"), reverse=True)
+    manifests = sorted(manifest_candidates(output), reverse=True)
     for manifest_path in manifests:
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -323,7 +324,7 @@ def main() -> int:
     parser.add_argument("--note-extracts", type=Path)
     parser.add_argument("--indices", nargs="*", type=int, help="Only process these manifest indices.")
     parser.add_argument("--cookies", required=True, type=Path)
-    parser.add_argument("--output", default=Path("Douyin Favorites"), type=Path)
+    parser.add_argument("--output", default=DEFAULT_OUTPUT, type=Path)
     parser.add_argument("--model", type=Path)
     parser.add_argument("--transcribe-max-ms", type=int, default=180000)
     parser.add_argument("--manifest", type=Path, help="Manifest path. Defaults to <output>/run_manifest.json.")
@@ -334,6 +335,7 @@ def main() -> int:
     args = parser.parse_args()
 
     output = args.output
+    assert_current_review_empty(output)
     processed_aweme_ids = load_aweme_ids(output)
     for name in ("details", "downloads", "audio", "transcripts", "notes"):
         (output / name).mkdir(parents=True, exist_ok=True)

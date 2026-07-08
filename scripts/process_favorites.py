@@ -18,6 +18,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from douyin_layout import DEFAULT_OUTPUT, assert_current_review_empty
 from note_metadata import add_aweme_id, clean_title, extract_aweme_id, load_aweme_ids, render_frontmatter
 
 
@@ -334,7 +335,7 @@ def main() -> int:
     global ALLOW_OPENAI
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, type=Path)
-    parser.add_argument("--output", default=Path("Douyin Favorites"), type=Path)
+    parser.add_argument("--output", default=DEFAULT_OUTPUT, type=Path)
     parser.add_argument("--manifest", type=Path, help="Run manifest path. Defaults to <output>/run_manifest.json.")
     parser.add_argument("--limit", default=10, type=int)
     parser.add_argument("--cookies", type=Path, help="Netscape-format cookies file for yt-dlp.")
@@ -346,6 +347,7 @@ def main() -> int:
     require_tool("yt-dlp")
     require_tool("ffmpeg")
     args.output.mkdir(parents=True, exist_ok=True)
+    assert_current_review_empty(args.output)
     items = load_items(args.input, args.limit)
     if not items:
         raise SystemExit("No URLs found in input JSON.")

@@ -8,6 +8,8 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+from douyin_layout import aweme_ids_path
+
 
 HASHTAG_RE = re.compile(r"#([^#\s]+)")
 LEADING_METRIC_RE = re.compile(r"^\s*\d+(?:\.\d+)?(?:万|亿)?\s*(?:\r?\n)+")
@@ -72,10 +74,6 @@ def extract_aweme_id(*values: object) -> str | None:
         if match:
             return match.group(1)
     return None
-
-
-def aweme_ids_path(output: Path) -> Path:
-    return output / "拉取记录" / "aweme_ids.txt"
 
 
 def load_aweme_ids(output: Path) -> set[str]:
