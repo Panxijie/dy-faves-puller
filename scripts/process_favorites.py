@@ -1,28 +1,22 @@
 #!/usr/bin/env python3
-"""Download Douyin favorite URLs and produce Markdown summaries."""
+"""Download Douyin favorite URLs into local source artifacts and a manifest."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import mimetypes
-import os
 import re
 import shutil
 import subprocess
 import sys
 import textwrap
 import time
-import urllib.error
-import urllib.request
-import uuid
 from pathlib import Path
 
-from douyin_layout import DEFAULT_OUTPUT, assert_current_review_empty
+from douyin_layout import DEFAULT_OUTPUT
 from note_metadata import add_aweme_id, clean_title, extract_aweme_id, load_aweme_ids, render_frontmatter
 
 
-ALLOW_OPENAI = False
 ENTERTAINMENT_RE = re.compile(r"相声|曲艺|影视|美剧|电影|剧集|追剧|综艺|脱口秀|说唱|音乐|歌曲|MV|演出|娱乐", re.I)
 
 
@@ -105,41 +99,6 @@ def extract_audio(video: Path, audio: Path) -> None:
     run(cmd)
 
 
-def multipart_body(fields: dict[str, str], file_field: str, file_path: Path) -> tuple[bytes, str]:
-    boundary = f"----codex-{uuid.uuid4().hex}"
-    chunks: list[bytes] = []
-    for name, value in fields.items():
-        chunks.append(f"--{boundary}\r\n".encode())
-        chunks.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
-        chunks.append(str(value).encode())
-        chunks.append(b"\r\n")
-    mime = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-    chunks.append(f"--{boundary}\r\n".encode())
-    chunks.append(
-        f'Content-Disposition: form-data; name="{file_field}"; filename="{file_path.name}"\r\n'.encode()
-    )
-    chunks.append(f"Content-Type: {mime}\r\n\r\n".encode())
-    chunks.append(file_path.read_bytes())
-    chunks.append(b"\r\n")
-    chunks.append(f"--{boundary}--\r\n".encode())
-    return b"".join(chunks), boundary
-
-
-def openai_request(path: str, payload: bytes, content_type: str, api_key: str) -> dict:
-    req = urllib.request.Request(
-        f"https://api.openai.com{path}",
-        data=payload,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": content_type},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"OpenAI API error {exc.code}: {body}") from exc
-
-
 def transcribe_audio(audio: Path) -> str:
     whisper = shutil.which("whisper")
     if whisper:
@@ -148,35 +107,7 @@ def transcribe_audio(audio: Path) -> str:
         txt = audio.with_suffix(".txt")
         if txt.exists():
             return txt.read_text(encoding="utf-8", errors="ignore").strip()
-
-    api_key = os.environ.get("OPENAI_API_KEY") if ALLOW_OPENAI else ""
-    if not api_key:
-        return ""
-    model = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
-    body, boundary = multipart_body({"model": model, "response_format": "json"}, "file", audio)
-    data = openai_request("/v1/audio/transcriptions", body, f"multipart/form-data; boundary={boundary}", api_key)
-    return str(data.get("text") or "").strip()
-
-
-def call_openai_summary(prompt: str) -> str:
-    api_key = os.environ.get("OPENAI_API_KEY") if ALLOW_OPENAI else ""
-    if not api_key:
-        return ""
-    model = os.environ.get("OPENAI_SUMMARY_MODEL", "gpt-4.1")
-    payload = json.dumps(
-        {
-            "model": model,
-            "input": prompt,
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
-    data = openai_request("/v1/responses", payload, "application/json", api_key)
-    parts: list[str] = []
-    for item in data.get("output", []):
-        for content in item.get("content", []):
-            if content.get("type") in {"output_text", "text"} and content.get("text"):
-                parts.append(content["text"])
-    return "\n".join(parts).strip() or str(data.get("output_text") or "").strip()
+    return ""
 
 
 def extractive_summary(transcript: str, title: str) -> str:
@@ -278,22 +209,7 @@ def process_item(item: dict, index: int, output: Path, cookies: Path | None, coo
         transcript_path = transcripts_dir / f"{prefix}.txt"
         transcript_path.write_text(transcript, encoding="utf-8")
 
-        prompt = textwrap.dedent(
-            f"""\
-            Summarize this Douyin video for an Obsidian note in Chinese.
-            Write an information-preserving note, not a short abstract. Include: one-sentence gist,
-            a chronological detailed account, concrete examples, named tools and parameters,
-            important numbers or claims, useful takeaways, caveats, and possible follow-up actions.
-            Distinguish claims made by the video from your own inference. Do not omit intermediate
-            steps merely to keep the answer short.
-
-            Title: {title}
-            URL: {item.get("url")}
-            转写文本:
-            {transcript[:18000]}
-            """
-        )
-        summary = call_openai_summary(prompt) or extractive_summary(transcript, title)
+        summary = extractive_summary(transcript, title)
         note_title = clean_title(info.get("description") or info.get("title") or title, f"douyin-{index:02d}")
         note_prefix = f"{index:02d}-{slugify(note_title, f'douyin-{index:02d}')}"
         note_path = notes_dir / f"{note_prefix}.md"
@@ -332,7 +248,6 @@ def process_item(item: dict, index: int, output: Path, cookies: Path | None, coo
 
 
 def main() -> int:
-    global ALLOW_OPENAI
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", default=DEFAULT_OUTPUT, type=Path)
@@ -340,14 +255,11 @@ def main() -> int:
     parser.add_argument("--limit", default=10, type=int)
     parser.add_argument("--cookies", type=Path, help="Netscape-format cookies file for yt-dlp.")
     parser.add_argument("--cookies-from-browser", help="Browser profile for yt-dlp, e.g. chrome, safari, edge.")
-    parser.add_argument("--use-openai", action="store_true", help="Allow uploading audio/transcript text to OpenAI for transcription/summarization.")
     args = parser.parse_args()
-    ALLOW_OPENAI = args.use_openai
 
     require_tool("yt-dlp")
     require_tool("ffmpeg")
     args.output.mkdir(parents=True, exist_ok=True)
-    assert_current_review_empty(args.output)
     items = load_items(args.input, args.limit)
     if not items:
         raise SystemExit("No URLs found in input JSON.")

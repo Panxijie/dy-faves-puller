@@ -12,7 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from douyin_layout import DEFAULT_OUTPUT, assert_current_review_empty, manifest_candidates
+from douyin_layout import DEFAULT_OUTPUT, manifest_candidates
 from note_metadata import (
     add_aweme_id,
     clean_title,
@@ -335,7 +335,6 @@ def main() -> int:
     args = parser.parse_args()
 
     output = args.output
-    assert_current_review_empty(output)
     processed_aweme_ids = load_aweme_ids(output)
     for name in ("details", "downloads", "audio", "transcripts", "notes"):
         (output / name).mkdir(parents=True, exist_ok=True)

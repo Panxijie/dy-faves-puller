@@ -87,7 +87,7 @@ Inject the exported Douyin cookies into the isolated Chrome session:
 
 ```bash
 PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
-  "Codex Skills/dy-faves2notes/scripts/inject_cookies_cdp.py" \
+  "Codex Skills/dy-faves-puller/scripts/inject_cookies_cdp.py" \
   --cookies "Douyin Favorites/拉取记录/<pull-id>/json/douyin-cookies.txt" \
   --port 9222 \
   --url "https://www.douyin.com/"
@@ -99,7 +99,7 @@ Capture detail responses for all first-10 favorites from the current pull record
 
 ```bash
 PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
-  "Codex Skills/dy-faves2notes/scripts/cdp_capture_details.py" \
+  "Codex Skills/dy-faves-puller/scripts/cdp_capture_details.py" \
   --favorites "Douyin Favorites/拉取记录/<pull-id>/json/favorites_urls.json" \
   --output-dir "Douyin Favorites/拉取记录/<pull-id>/json/cdp-details" \
   --port 9222 \
@@ -107,7 +107,7 @@ PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
   --manifest "Douyin Favorites/拉取记录/<pull-id>/json/cdp-capture-manifest.json"
 ```
 
-Process the captured response bodies. Once all detail JSON has been captured, prefer Codex sub-agents over local threads/processes for per-video work. Use a conservative cap such as 2 or 3 sub-agents, assign each worker disjoint `--indices`, and have each worker write its own shard manifest with `--defer-registry`. Each worker should run both `process_signed_details.py` and `summarize_notes_with_model.py` on its shard manifest. The parent agent should merge shard manifests, update the global registry after verification, then run the final organization/index pass. `--max-workers` remains available as a local fallback when sub-agents are unavailable.
+Process the captured response bodies. Once all detail JSON has been captured, prefer Codex sub-agents over local threads/processes for per-video work. Use a conservative cap such as 2 or 3 sub-agents, assign each worker disjoint `--indices`, and have each worker write its own shard manifest with `--defer-registry`. Each worker should run `process_signed_details.py` only: this skill stops after local media, transcripts, staging draft notes, and manifest records exist. The parent agent should merge shard manifests and update the global registry after verification. `--max-workers` remains available as a local fallback when sub-agents are unavailable.
 
 `process_signed_details.py` requires a Netscape cookie-file argument; start with a non-sensitive empty file because captured signed media URLs often download without cookies:
 
@@ -115,7 +115,7 @@ Process the captured response bodies. Once all detail JSON has been captured, pr
 printf '# Netscape HTTP Cookie File\n' \
   > "Douyin Favorites/拉取记录/<pull-id>/json/empty-cookies.txt"
 PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
-  "Codex Skills/dy-faves2notes/scripts/process_signed_details.py" \
+  "Codex Skills/dy-faves-puller/scripts/process_signed_details.py" \
   --signed-details "Douyin Favorites/拉取记录/<pull-id>/json/cdp-capture-manifest.json" \
   --cookies "Douyin Favorites/拉取记录/<pull-id>/json/empty-cookies.txt" \
   --output "Douyin Favorites" \
@@ -128,7 +128,7 @@ PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
 
 If download fails with the empty file, ask before using an exported real cookie file and rerun with `--cookies "Douyin Favorites/douyin-cookies.txt"`.
 
-Verify local videos and detail-derived metadata before summarizing. Entertainment records should be `skipped_entertainment` and have no media assets. Non-entertainment video records must have local media. For every `ok` item whose detail JSON includes `aweme.statistics` or hashtags, the draft note frontmatter must already contain non-empty engagement fields and tags. Fix capture/processing before writing final summaries.
+Verify local videos and detail-derived metadata before handing the manifest to `review-summarizer`. Entertainment records should be `skipped_entertainment` and have no media assets. Non-entertainment video records must have local media. For every `ok` item whose detail JSON includes `aweme.statistics` or hashtags, the staging note frontmatter must already contain non-empty engagement fields and tags. Fix capture/processing before asking the summary skill to write review notes.
 
 ```bash
 python3 - <<'PY'

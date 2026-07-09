@@ -1,85 +1,81 @@
 ---
-name: dy-faves2notes
-description: Fetch a logged-in Douyin user's favorite/collection videos, save the first N video URLs, download each video, extract subtitles or audio transcript, summarize the content, and write Markdown notes. Use when Codex needs to automate Douyin favorites, collections, liked videos, or private logged-in Douyin video lists into local Markdown/Obsidian notes.
+name: dy-faves-puller
+description: Fetch a logged-in Douyin user's favorite or collection items into local Wiki Library source materials. Use when Codex needs to open the authenticated Douyin favorites page, collect current favorite URLs, capture detail JSON, download local videos/images/audio, transcribe locally when possible, and write pull manifests under `Wiki Library/raw/originals/douyin/`. This skill does not call a summary model or write final review notes; use `review-summarizer` afterward for model-generated candidate summaries.
 ---
 
-# DY Faves2Notes
+# DY Faves Puller
 
 ## Overview
 
-Automate a logged-in Douyin favorites workflow into local Markdown notes. The skill uses the in-app browser to collect the user's current favorite URLs, downloads real local video resources, extracts audio, transcribes locally when possible, and creates one `.md` summary per item.
+Pull Douyin favorites into local source files. This skill stops at local evidence: URLs, detail JSON, downloaded media, audio, transcripts, staging draft notes when scripts need them, registry records, and `run_manifest.json`.
 
-When the user asks to "总结前 10 条收藏视频", "处理我的收藏", or similar, treat it as a request to fetch the current Douyin favorites page again. Do not summarize an old pull record unless the user explicitly asks to use an existing pull record.
+Do not use this skill to generate model-written summaries, organize notes into `raw/review/current/`, or promote anything into `Wiki Library/wiki/`. After a pull is complete, hand the manifest to `review-summarizer` if the user wants candidate review summaries.
 
-Do not fall back to page-title-only or visible-page-text-only summaries when the user asked for favorite videos. A correct run must produce local video files for the target videos, then summarize from transcript/audio/video-derived content. Page text is only auxiliary metadata.
+## Output Boundary
 
-Entertainment items are different: if metadata/title/tags indicate `影音与娱乐`, skip them before media download and record `skipped_entertainment`. Examples include `相声`, `曲艺`, `影视`, `美剧`, `电影`, `剧集`, `追剧`, `综艺`, `脱口秀`, `说唱`, `音乐`, `歌曲`, `MV`, and `演出`.
+This skill writes only under:
 
-The workflow is not complete when transcription finishes. A complete pull must also rewrite draft notes into structured Chinese summaries, organize them into `Wiki Library/raw/douyin/review/current/`, move source assets into `Wiki Library/raw/douyin/assets/`, and keep pull records under `Wiki Library/raw/douyin/pulls/`.
+- `Wiki Library/raw/originals/douyin/pulls/<pull-id>/`: pull record, `run_report.md`, `favorites_urls.json`, `run_manifest.json`, capture manifests, cookies files when explicitly approved, and per-item detail JSON.
+- `Wiki Library/raw/originals/douyin/assets/`: stable local source assets when already organized by a previous pass.
+- `Wiki Library/raw/originals/douyin/downloads/`, `audio/`, `transcripts/`, `details/`, `notes/`: staging folders used during capture and transcription.
+- `Wiki Library/raw/originals/douyin/registry/`: processed ID registry and review event records.
 
-Before starting a new pull, `Wiki Library/raw/douyin/review/current/` must contain no Markdown notes. If it is not empty, stop and ask the user to review/promote or delete the current notes first. The user reviews by reading `review/current/`: deleted Markdown files are treated as rejected, and still-existing Markdown files are promoted into `Wiki Library/wiki/` by `promote_douyin_review.py`, then moved to `review/archive/`.
-
-Downloads and transcription should run as a pipeline when the implementation supports it: start multiple media downloads concurrently, and as soon as one item finishes downloading, extract audio and enqueue transcription for that item instead of waiting for every download to finish. Keep final note ordering stable by manifest `index`.
-
-## Non-Negotiable Output Contract
-
-For each non-entertainment item with captured detail JSON, the final note must be derived from the downloaded local media/transcript and must preserve the metadata captured from that detail JSON. Do not create final notes by hand from page text, and do not recreate frontmatter from memory.
-
-The captured per-item detail JSON is the canonical source for:
-
-- `likes`, `comments`, `favorites`, `shares` from `aweme.statistics`.
-- `tags` from structured `text_extra` hashtags and hashtag text in `desc`.
-- `duration` from aweme/video metadata or `ffprobe`.
-- `source_url`, `aweme_id`, source title, and media URLs.
-
-After `process_signed_details.py` creates draft notes, treat the draft note frontmatter as data that must be preserved. When rewriting summaries, edit only the Markdown body below the closing `---` unless there is a specific metadata correction from detail JSON. Never replace populated `likes`, `comments`, `favorites`, `shares`, or `tags` with `null` or `[]`.
+It must not write candidate summaries to `Wiki Library/raw/review/current/`. Staging files under `raw/originals/douyin/notes/` are extraction artifacts for later summarization, not human review notes.
 
 ## Workflow
 
 1. Open `https://www.douyin.com/user/self?showTab=favorite_collection` in the in-app browser.
-2. If the page is logged out, show the browser and ask the user to scan/login. If Douyin opens a verification/challenge page after login or cookie injection, for example CAPTCHA, slider verification, QR confirmation, SMS/OTP prompt, or other risk-control check, stop and tell the user that manual verification is needed. Resume only after the user says verification is complete. Do not enter passwords, OTPs, or solve CAPTCHAs without explicit action-time confirmation.
-3. Record the pull start time to the minute as `YYYY-MM-DD_HH-mm`. Create `Wiki Library/raw/douyin/pulls/<pull-id>/json/`.
-4. Collect the first 10 currently visible favorite `video` or `note` links from the authenticated page. Use `references/browser-extraction.md` and save the array as `Wiki Library/raw/douyin/pulls/<pull-id>/json/favorites_urls.json`.
-5. Run the normal `yt-dlp` path first. It handles public/simple cases and creates the first manifest:
+2. If the page is logged out, show the browser and ask the user to scan/login. If Douyin shows CAPTCHA, slider verification, QR confirmation, SMS/OTP, or another challenge, stop and wait for the user to complete it manually.
+3. Record the pull start time to the minute as `YYYY-MM-DD_HH-mm`. Create:
 
 ```bash
-python3 "Codex Skills/dy-faves2notes/scripts/process_favorites.py" \
-  --input "Wiki Library/raw/douyin/pulls/<pull-id>/json/favorites_urls.json" \
-  --output "Wiki Library/raw/douyin" \
-  --manifest "Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest.json" \
+Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/
+```
+
+4. Collect the first requested favorite `video` or `note` links from the authenticated page. Use `references/browser-extraction.md` and save:
+
+```bash
+Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json
+```
+
+5. Run the normal `yt-dlp` path first:
+
+```bash
+python3 "Codex Skills/dy-faves-puller/scripts/process_favorites.py" \
+  --input "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json" \
+  --output "Wiki Library/raw/originals/douyin" \
+  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/run_manifest.json" \
   --limit 10
 ```
 
-6. If `yt-dlp` reports that fresh cookies are needed, ask for explicit permission before reading browser cookies. After approval, retry with a normal browser profile that is already logged in to Douyin:
+If this produces local media and transcripts, keep the manifest as the pull output. Do not run a summary model in this skill.
+
+6. If `yt-dlp` reports that fresh cookies are needed, ask for explicit permission before reading browser cookies. After approval, retry with a browser profile already logged in to Douyin:
 
 ```bash
-python3 "Codex Skills/dy-faves2notes/scripts/process_favorites.py" \
-  --input "Wiki Library/raw/douyin/pulls/<pull-id>/json/favorites_urls.json" \
-  --output "Wiki Library/raw/douyin" \
-  --manifest "Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest.json" \
+python3 "Codex Skills/dy-faves-puller/scripts/process_favorites.py" \
+  --input "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json" \
+  --output "Wiki Library/raw/originals/douyin" \
+  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/run_manifest.json" \
   --limit 10 \
   --cookies-from-browser chrome
 ```
 
-If this still returns `Fresh cookies are needed` or fails to produce local MP4 files, continue to the CDP fallback. Do not answer from the fallback notes produced by `process_favorites.py` when their status is `download_failed`; those notes are placeholders.
+If this still fails to produce local MP4 files for non-entertainment video items, continue to the CDP fallback.
 
-7. Use the detail-JSON/CDP fallback. This is the reliable path for Douyin favorites that render in the browser but block `yt-dlp`.
-
-Ask for explicit approval to start a temporary debuggable Chrome with an isolated profile. To avoid asking the user to scan/login again, first ask for approval to read existing Chrome Douyin cookies. If approved, export them to the pull record:
+7. For the CDP fallback, first ask for approval to export existing Chrome Douyin cookies:
 
 ```bash
 yt-dlp \
   --cookies-from-browser chrome \
-  --cookies "Wiki Library/raw/douyin/pulls/<pull-id>/json/douyin-cookies.txt" \
+  --cookies "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/douyin-cookies.txt" \
   --skip-download \
   "https://www.douyin.com/"
 ```
 
-`yt-dlp` may still end with `Unsupported URL` for the Douyin homepage after exporting cookies. Treat the export as usable only if the cookie file exists and is non-empty; do not treat a non-zero exit alone as proof that export failed.
+Treat the export as usable only if the cookie file exists and is non-empty. Do not print cookies.
 
-Do not print the cookie file. Keep it inside the pull record and delete it after the workflow only if the user approves cleanup.
-
-Then start the isolated debuggable Chrome:
+Then ask for approval to start an isolated debuggable Chrome:
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -89,83 +85,55 @@ Then start the isolated debuggable Chrome:
   "https://www.douyin.com/"
 ```
 
-If an exported cookie file exists, inject those cookies into the isolated Chrome session before capture:
+If an exported cookie file exists, inject it:
 
 ```bash
 PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
-  "Codex Skills/dy-faves2notes/scripts/inject_cookies_cdp.py" \
-  --cookies "Wiki Library/raw/douyin/pulls/<pull-id>/json/douyin-cookies.txt" \
+  "Codex Skills/dy-faves-puller/scripts/inject_cookies_cdp.py" \
+  --cookies "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/douyin-cookies.txt" \
   --port 9222 \
   --url "https://www.douyin.com/"
 ```
 
-After starting the temporary Chrome, always check its current Douyin page state before asking the user to log in. If the temporary profile is already authenticated, continue directly. If cookie export or injection is unavailable, or if the temporary profile is still logged out after this check, show the Chrome window and ask the user to log in manually. If the temporary profile reaches a Douyin verification/challenge page instead of the favorites page, stop and tell the user to complete verification in that visible Chrome window, then continue only after the user confirms it is done. Once the temporary browser is authenticated, capture detail JSON for all 10 current favorites:
+Capture detail JSON:
 
 ```bash
 PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
-  "Codex Skills/dy-faves2notes/scripts/cdp_capture_details.py" \
-  --favorites "Wiki Library/raw/douyin/pulls/<pull-id>/json/favorites_urls.json" \
-  --output-dir "Wiki Library/raw/douyin/pulls/<pull-id>/json/cdp-details" \
+  "Codex Skills/dy-faves-puller/scripts/cdp_capture_details.py" \
+  --favorites "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json" \
+  --output-dir "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-details" \
   --port 9222 \
   --timeout 45 \
-  --manifest "Wiki Library/raw/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json"
+  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json"
 ```
 
-If sandboxing blocks `127.0.0.1:9222` with `Operation not permitted`, rerun the same command with escalated permission. Do not print cookies or signed URLs.
+If sandboxing blocks `127.0.0.1:9222`, rerun the same command with escalated permission. Do not print signed URLs.
 
-8. Process the captured detail bodies into local videos, audio, transcripts, draft notes, and a corrected manifest. `process_signed_details.py` must classify each detail JSON before downloading media; entertainment items should become `skipped_entertainment` with no video/audio/transcript asset.
-
-After all detail JSON has been captured, prefer Codex sub-agents for the expensive per-video work when the environment exposes multi-agent tools. Set a conservative sub-agent cap first, usually `2` or `3`, because local transcription and model summarization are CPU/API-heavy. The parent agent should split disjoint index ranges, give each worker a shard manifest path, and keep final organization/indexing local to the parent. Workers must not share a manifest path and should use `--defer-registry`; the parent merges shard manifests into `run_manifest.json`, updates `aweme_ids.txt`, verifies resources/metadata, then runs the final organization/index pass.
-
-Example worker commands for a sub-agent shard:
-
-```bash
-PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
-  "Codex Skills/dy-faves2notes/scripts/process_signed_details.py" \
-  --signed-details "Wiki Library/raw/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json" \
-  --indices 2 3 4 \
-  --cookies "Wiki Library/raw/douyin/pulls/<pull-id>/json/empty-cookies.txt" \
-  --output "Wiki Library/raw/douyin" \
-  --model "Wiki Library/raw/douyin/models/ggml-base.bin" \
-  --transcribe-max-ms 0 \
-  --manifest "Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest-agent-1.json" \
-  --defer-registry \
-  --merge-manifest \
-  --keep-success
-
-python3 "Codex Skills/dy-faves2notes/scripts/summarize_notes_with_model.py" \
-  --manifest "Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest-agent-1.json"
-```
-
-Each worker should report its shard manifest path and any failed indices. The parent agent then merges all `run_manifest-agent-*.json` records into the canonical `run_manifest.json`, preserving stable order by `index`; records from shard manifests should replace matching placeholder/error records from the canonical manifest unless `--keep-success` preserved a prior successful item. Only after merge should the parent append eligible aweme IDs to `registry/aweme_ids.txt`.
-
-If sub-agents are not available, process locally with the normal command. `--max-workers` is available as a fallback local worker cap, but it is not a substitute for Codex sub-agents.
-
-The script requires a Netscape cookies file argument even when the captured signed media URLs do not need cookies; create a non-sensitive empty file inside the pull record:
+8. Process captured details into local media, local transcripts, staging draft notes, and the canonical manifest:
 
 ```bash
 printf '# Netscape HTTP Cookie File\n' \
-  > "Wiki Library/raw/douyin/pulls/<pull-id>/json/empty-cookies.txt"
+  > "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/empty-cookies.txt"
 PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
-  "Codex Skills/dy-faves2notes/scripts/process_signed_details.py" \
-  --signed-details "Wiki Library/raw/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json" \
-  --cookies "Wiki Library/raw/douyin/pulls/<pull-id>/json/empty-cookies.txt" \
-  --output "Wiki Library/raw/douyin" \
-  --model "Wiki Library/raw/douyin/models/ggml-base.bin" \
+  "Codex Skills/dy-faves-puller/scripts/process_signed_details.py" \
+  --signed-details "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json" \
+  --cookies "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/empty-cookies.txt" \
+  --output "Wiki Library/raw/originals/douyin" \
+  --model "Wiki Library/raw/originals/douyin/models/ggml-base.bin" \
   --transcribe-max-ms 0 \
-  --manifest "Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest.json" \
+  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/run_manifest.json" \
   --merge-manifest \
   --keep-success
 ```
 
-If media download fails with the empty cookie file, ask before exporting/using a real Netscape cookie file and rerun with a cookies file inside the pull record.
+Use `--max-workers` or sub-agent sharding only for the local download/transcription stage. Workers should write shard manifests, and the parent should merge them into the canonical `run_manifest.json`.
 
-9. Verify local resources and metadata before summarizing. This is a required gate; do not start final note rewriting until it passes.
+9. Verify the local-source pull:
 
 ```bash
 python3 - <<'PY'
-import json, pathlib, re, subprocess, sys
-m = json.load(open("Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest.json", encoding="utf-8"))
+import json, pathlib, subprocess
+m = json.load(open("Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/run_manifest.json", encoding="utf-8"))
 for item in m:
     if item.get("status") == "skipped_entertainment":
         if item.get("video") or item.get("audio") or item.get("transcript"):
@@ -174,267 +142,46 @@ for item in m:
     if item.get("status") not in {"ok", "note_only", "already_processed"}:
         raise SystemExit(f"Unresolved item status: {item.get('index')} {item.get('status')}")
     video_value = item.get("video")
-    if item.get("content_type") != "note" and not video_value:
-        raise SystemExit(f"Missing local video path: {item.get('index')}")
-    if not video_value:
-        continue
-    video = pathlib.Path(video_value)
-    result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration,size", "-of", "default=nw=1", str(video)],
-        capture_output=True, text=True, check=True,
-    )
-    print(item["index"], video.name)
-    print(result.stdout.strip())
+    if item.get("content_type") != "note" and video_value:
+        video = pathlib.Path(video_value)
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration,size", "-of", "default=nw=1", str(video)],
+            capture_output=True, text=True, check=True,
+        )
+        print(item["index"], video.name)
+        print(result.stdout.strip())
+print("Douyin local pull verified.")
 PY
 ```
 
-All non-entertainment target video items must have valid local MP4 paths in `run_manifest.json`, except items explicitly marked `manual_deleted` because the user previously removed their note/assets after reading them. Entertainment items should have `status: "skipped_entertainment"` and no local media. If any non-entertainment item lacks a video and is not `manual_deleted`, fix the download/capture first instead of summarizing page text.
+10. Report the manifest path and stop. If the user wants summaries next, invoke `review-summarizer` with that manifest.
 
-Then verify each draft note has the metadata captured in detail JSON:
+## Rules
 
-```bash
-PYTHONPATH="Codex Skills/dy-faves2notes/scripts" python3 - <<'PY'
-import json, pathlib, re
-from note_metadata import stats_from_aweme, tags_from_aweme
-
-manifest = json.load(open("Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest.json", encoding="utf-8"))
-
-def find_aweme(value, predicate):
-    if isinstance(value, dict):
-        if predicate(value):
-            return value
-        for child in value.values():
-            found = find_aweme(child, predicate)
-            if found:
-                return found
-    elif isinstance(value, list):
-        for child in value:
-            found = find_aweme(child, predicate)
-            if found:
-                return found
-    return None
-
-def frontmatter(path):
-    text = pathlib.Path(path).read_text(encoding="utf-8")
-    if not text.startswith("---\n") or "\n---\n" not in text[4:]:
-        raise SystemExit(f"Missing YAML frontmatter: {path}")
-    raw = text.split("\n---\n", 1)[0]
-    return {m.group(1): m.group(2).strip() for m in re.finditer(r"^([^:\n]+):\s*(.*)$", raw, re.M)}
-
-for item in manifest:
-    if item.get("status") != "ok":
-        continue
-    note = item.get("note")
-    detail = item.get("detail_json")
-    if not note or not detail:
-        raise SystemExit(f"Missing note/detail path: {item.get('index')}")
-    data = json.load(open(detail, encoding="utf-8"))
-    stats_aweme = find_aweme(data, lambda obj: isinstance(obj.get("statistics"), dict)) or {}
-    tags_aweme = find_aweme(data, lambda obj: "text_extra" in obj or "desc" in obj) or {}
-    meta = frontmatter(note)
-    for key, value in stats_from_aweme(stats_aweme).items():
-        if key in {"likes", "comments", "favorites", "shares"} and meta.get(key) in {None, "", "null"}:
-            raise SystemExit(f"Missing {key} in note frontmatter: {note}")
-    if tags_from_aweme(tags_aweme) and meta.get("tags") in {None, "", "[]"}:
-        raise SystemExit(f"Missing tags in note frontmatter: {note}")
-print("Draft metadata verified.")
-PY
-```
-
-10. Read the complete transcript paths listed in `run_manifest.json`, not stale similarly named files from earlier failed attempts. Rewrite only the note body from transcript content and save the rewritten Markdown back to each manifest item's `note` path before organizing. Preserve existing YAML frontmatter from the draft note, including statistics and tags.
-
-By default, use the configurable summary model script rather than Codex hand-written summaries. Unless the user explicitly asks to use Codex/manual summaries or to stay offline, treat this configured model as the default summarizer for final note rewriting.
-
-The model API URL, model name, API key source, and generation parameters come from `Codex Skills/dy-faves2notes/summary_model_config.json`. The fixed summarization requirements live in `Codex Skills/dy-faves2notes/summary_prompt.md`. Future summary style or content-requirement changes should normally be made in `summary_prompt.md`, not improvised by Codex at runtime.
-
-```json
-{
-  "provider": "openai_compatible",
-  "base_url": "https://api.deepseek.com",
-  "endpoint": "/chat/completions",
-  "api_key_env": "DEEPSEEK_API_KEY",
-  "api_key": "",
-  "model": "deepseek-v4-pro",
-  "prompt_path": "summary_prompt.md",
-  "temperature": 0.2,
-  "max_tokens": 4096,
-  "timeout_seconds": 120
-}
-```
-
-After transcription and metadata verification pass, run the configured model summarizer:
-
-```bash
-python3 "Codex Skills/dy-faves2notes/scripts/summarize_notes_with_model.py" \
-  --manifest "Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest.json"
-```
-
-This sends local transcript text and note metadata to the API configured in `summary_model_config.json`; do not print API keys or request/response bodies containing private content. The model-generated note body must still satisfy:
-
-- `## 摘要`: one concise orientation paragraph of 50 Chinese characters or fewer.
-- `## 详细内容`: follow the video's order and retain reasoning, intermediate steps, demonstrations, examples, names, numbers, settings, and comparisons.
-- Topic-specific sections such as tools, procedures, arguments, or cases when they improve scanning.
-- `## 注意事项`: separate the video's claims from verified facts and note uncertainty or transcription ambiguity.
-- The model prompt is the fixed text in `summary_prompt.md`; the user prompt should only add per-video metadata and transcript content.
-
-Entertainment/music items should not be downloaded or summarized unless the user explicitly asks to keep entertainment assets. Non-entertainment visual/lifestyle items may be downloaded and summarized when they contain informational guidance; if the transcript is weak, note the uncertainty.
-
-Do not optimize for the shortest possible note. For ordinary informational videos, make the detailed section substantial enough to reconstruct the main content without replaying the video. For long tutorials, preserve every major chapter and actionable step.
-
-After rewriting, verify that each kept note has real Chinese sections, not the script's extractive fallback headings such as `## Summary`, `## Notes`, or `## 内容脉络（自动提取）`. Also rerun the draft metadata verification above; if a body rewrite dropped stats or tags, restore them from detail JSON before organizing.
-
-11. Preview organization, fix any bad auto-classification or overlong filenames if needed, then apply:
-
-```bash
-python3 "Codex Skills/dy-faves2notes/scripts/organize_content_library.py" \
-  --output "Wiki Library/raw/douyin" \
-  --manifest "Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest.json" \
-  --pulled-at "YYYY-MM-DD HH:MM"
-python3 "Codex Skills/dy-faves2notes/scripts/organize_content_library.py" \
-  --output "Wiki Library/raw/douyin" \
-  --manifest "Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest.json" \
-  --pulled-at "YYYY-MM-DD HH:MM" \
-  --apply
-```
-
-Close the temporary Chrome session after capture and processing. Delete `.tmp/douyin-cdp-profile` only after the user approves cleanup.
-
-12. Verify completion:
-
-```bash
-python3 "Codex Skills/dy-faves2notes/scripts/promote_douyin_review.py" --dry-run
-PYTHONPATH="Codex Skills/dy-faves2notes/scripts" python3 - <<'PY'
-import json, pathlib, re
-from note_metadata import stats_from_aweme, tags_from_aweme
-
-manifest = json.load(open("Wiki Library/raw/douyin/pulls/<pull-id>/json/run_manifest.json", encoding="utf-8"))
-
-def find_aweme(value, predicate):
-    if isinstance(value, dict):
-        if predicate(value):
-            return value
-        for child in value.values():
-            found = find_aweme(child, predicate)
-            if found:
-                return found
-    elif isinstance(value, list):
-        for child in value:
-            found = find_aweme(child, predicate)
-            if found:
-                return found
-    return None
-
-def yaml_value(front, key):
-    match = re.search(rf"^{re.escape(key)}:\s*(.*)$", front, re.M)
-    return match.group(1).strip() if match else None
-
-for item in manifest:
-    if item.get("status") != "ok" or not item.get("note"):
-        continue
-    path = pathlib.Path(item["note"])
-    text = path.read_text(encoding="utf-8")
-    if "## Summary" in text or "## 内容脉络（自动提取）" in text:
-        raise SystemExit(f"Draft fallback remains: {path}")
-    match = re.search(r"^## 摘要\s*$([\s\S]*?)(?=^##\s+|\Z)", text, re.M)
-    if not match:
-        raise SystemExit(f"Missing summary section: {path}")
-    summary = " ".join(match.group(1).split())
-    if len(summary) > 50:
-        raise SystemExit(f"Summary too long ({len(summary)}): {path}")
-    front = text.split("\n---\n", 1)[0]
-    detail = item.get("detail_json")
-    if detail:
-        data = json.load(open(detail, encoding="utf-8"))
-        stats_aweme = find_aweme(data, lambda obj: isinstance(obj.get("statistics"), dict)) or {}
-        tags_aweme = find_aweme(data, lambda obj: "text_extra" in obj or "desc" in obj) or {}
-        for key, value in stats_from_aweme(stats_aweme).items():
-            if key in {"likes", "comments", "favorites", "shares"} and yaml_value(front, key) in {None, "", "null"}:
-                raise SystemExit(f"Missing engagement metadata: {path} {key}")
-        if tags_from_aweme(tags_aweme) and yaml_value(front, "tags") in {None, "", "[]"}:
-            raise SystemExit(f"Missing tags: {path}")
-print("Latest pull notes verified.")
-PY
-```
-
-Only report pull completion after the dry-run organization has been reviewed, the apply pass succeeds, and the new candidate notes are present in `Wiki Library/raw/douyin/review/current/`. Do not promote them into `Wiki Library/wiki/` until the user has reviewed the current notes and deleted anything they do not want kept.
-
-After summaries are finalized, write candidate review notes and local source assets separately:
-
-- Put Markdown notes under `Wiki Library/raw/douyin/review/current/<category>/<pull-date>-<category-sequence>-<summary-title>.md`.
-- Put videos, images, audio, and transcript files under `Wiki Library/raw/douyin/assets/video/`, `assets/images/`, `assets/audio/`, and `assets/transcripts/`.
-- Add a `## 本地文件` section to every note with relative Markdown links to the local video or image, transcript, and audio when those files exist.
-
-Reset the sequence to 1 for each broad category on each new date, and continue from the largest existing sequence in that same category when multiple pulls occur on the same date. Use one broad `category` and one narrower `subcategory`: `技术与工具`, `科研与学习`, `情感与关系`, `影音与娱乐`, `生活与职场`, or `待分类`.
-
-Use the same YAML property schema for every note, in this order:
-
-`source_url`, `created_at`, `content_type`, `original_title`, `category`, `subcategory`, `pulled_at`, `category_sequence`, `duration`, `likes`, `comments`, `favorites`, `shares`, `tags`.
-
-Keep missing values as explicit `null` and missing tag lists as `[]` so every note has the same property keys. Do not store `title` because the note title already appears in the filename. Do not store `pull_date` because `pulled_at` includes the date. Do not store `video_path`, `image_path`, `audio_path`, `transcript_path`, or `detail_json` in YAML; local media links belong only in `## 本地文件`, and detail JSON remains discoverable from the pull record manifest.
-
-If the per-item detail JSON contains `aweme.statistics`, the final note YAML must include non-null `likes`, `comments`, `favorites`, and `shares` values from that structure. Leave these fields as `null` only when the captured detail JSON truly lacks the corresponding statistic. If the detail JSON contains `text_extra` hashtags or hashtags in `desc`, the final note YAML must include those values in `tags`; leave `tags: []` only when no captured hashtag data exists.
-
-Move the run report and JSON records into `Wiki Library/raw/douyin/pulls/<YYYY-MM-DD_HH-mm>/`. Keep `run_report.md` at the record root; put `run_manifest.json`, `favorites_urls.json`, `note-extracts.json`, and per-item detail JSON files under its `json/` directory.
-
-Maintain `Wiki Library/raw/douyin/registry/aweme_ids.txt` as the global processed-ID registry, with one `aweme_id` per line. Add IDs after an item is successfully summarized, saved as note-only, intentionally skipped as entertainment, or intentionally skipped because it was already processed and later manually deleted by the user. Use this file for duplicate detection before any media download in future pulls.
-
-`aweme_ids.txt` alone is not proof that the note/assets still exist. When an ID is already processed, first look up prior manifests and verify the referenced local review note/media files still exist. If they exist, reuse their paths in the current manifest. If they are missing, assume the user deliberately deleted them after reading; mark the item `status: "already_processed"`, `manual_deleted: true`, and do not redownload or regenerate it unless the user explicitly asks to restore deleted items.
-
-After the user reviews `review/current/`, promote the remaining Markdown files into the wiki:
-
-```bash
-python3 "Codex Skills/dy-faves2notes/scripts/promote_douyin_review.py"
-```
-
-The promote pass creates `Wiki Library/wiki/sources/` pages, updates `Wiki Library/wiki/index.md`, appends `Wiki Library/wiki/log.md`, records `promoted` or `dismissed_by_deletion` events in `registry/review_events.jsonl`, and moves promoted review notes into `review/archive/`.
-
-Name notes as `<YYYY-MM-DD>-<two-digit category sequence>-<summary title>.md`. Do not use the raw Douyin title directly as the filename. After summarizing the content, choose a concise, descriptive note title and store the source title as `original_title`. Remove leading engagement counts and hashtags from filenames. Use `video` or `note` for `content_type`, without the `douyin_` prefix. Store engagement metadata in YAML properties as compact readable values: keep counts below 1w as integers, and format counts of 1w or more with `w` as the ten-thousand unit, such as `1.2w` or `28.5w`. Use explicit `null` for unavailable scalar properties instead of omitting the key. Store `duration` as human-readable Chinese text such as `2 分钟 31 秒` or `1 小时 4 分钟 8 秒`, not milliseconds.
-
-To migrate the old pre-wiki `Douyin Favorites/` folder into this layout, preview and then apply:
-
-```bash
-python3 "Codex Skills/dy-faves2notes/scripts/migrate_existing_douyin_favorites.py"
-python3 "Codex Skills/dy-faves2notes/scripts/migrate_existing_douyin_favorites.py" --apply
-```
+- Entertainment items are skipped before media download unless the user explicitly asks to keep them. Examples: `相声`, `曲艺`, `影视`, `美剧`, `电影`, `剧集`, `追剧`, `综艺`, `脱口秀`, `说唱`, `音乐`, `歌曲`, `MV`, `演出`.
+- The captured detail JSON is the canonical source for statistics, tags, duration, source URL, aweme ID, source title, and media URLs.
+- Do not create final notes from page titles or visible page text alone.
+- Do not call `summarize_notes_with_model.py`, `organize_content_library.py`, or any chat-completion summary API from this skill.
+- Do not promote review notes into `Wiki Library/wiki/` from this skill.
+- Keep cookies and signed URLs private. Never print them.
+- Start debuggable Chrome only after explicit user approval, use an isolated temporary profile, close it after capture, and delete the temporary profile only after the user approves cleanup.
+- Respect platform terms and the user's account boundaries. Only process videos from the user's authenticated session and local files requested by the user.
 
 ## Required Tools
 
-- `yt-dlp` for video metadata, subtitles, and media download.
-- `ffmpeg` for audio extraction.
-- `ffprobe` for deriving human-readable video duration when metadata is missing.
 - In-app browser access for the authenticated Douyin favorites page.
-- Python `requests` and `websocket-client` packages for the CDP detail-capture fallback.
+- `yt-dlp` for video metadata, subtitles, and media download.
+- `ffmpeg` and `ffprobe` for audio extraction and media validation.
+- Python `requests` and `websocket-client` packages for CDP detail capture.
+- Optional local `whisper-cli` plus a GGML model for offline transcription.
 
-Optional:
+## Next Step
 
-- `OPENAI_API_KEY` plus the explicit script flag `--use-openai` for OpenAI audio transcription and Markdown summarization. Never use `--use-openai` unless the user has approved uploading downloaded audio/transcript text to OpenAI. The script uses `gpt-4o-mini-transcribe` for audio and `gpt-4.1` for summaries by default; override with `OPENAI_TRANSCRIBE_MODEL` and `OPENAI_SUMMARY_MODEL`.
-- A configured OpenAI-compatible summary API in `Codex Skills/dy-faves2notes/summary_model_config.json` for final note rewriting after local transcription. This configured model is the default final summarizer unless the user explicitly asks to use Codex/manual summaries or an offline-only workflow.
-- Local `whisper-cli` from `whisper-cpp` plus a GGML model for offline transcription.
+After this skill produces a verified `run_manifest.json`, use:
 
-## Output Layout
+```bash
+python3 "Codex Skills/review-summarizer/scripts/summarize_notes_with_model.py" \
+  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/run_manifest.json"
+```
 
-`Wiki Library/raw/douyin/` contains:
-
-- `review/current/`: current pull's candidate summaries waiting for user review.
-- `review/archive/`: candidate summaries after they have been promoted into `Wiki Library/wiki/`.
-- `assets/`: local source assets, including videos, images, audio, and transcript text. Notes link to these files with relative Markdown links.
-- `registry/aweme_ids.txt`: global processed-ID registry, one aweme ID per line.
-- `registry/review_events.jsonl`: promote and dismissed-by-deletion events.
-- `pulls/<YYYY-MM-DD_HH-mm>/`: one pull's `run_report.md` and `json/` records, including per-item detail JSON.
-- `downloads/`, `audio/`, `transcripts/`, and `details/`: temporary staging folders before organization. After a clean organization pass, these should normally be empty or absent.
-
-## Failure Handling
-
-- If Douyin shows a login prompt, stop collection and ask the user to log in in the visible browser.
-- If Douyin shows a verification/challenge page, stop collection and ask the user to complete that verification in the visible browser before retrying the same capture step.
-- If extraction returns fewer than 10 links, scroll the favorites grid and rerun the extraction snippet.
-- If an item's `aweme_id` is already in `registry/aweme_ids.txt`, reuse existing note/assets only if the referenced files still exist. If they are missing, mark it `manual_deleted` and skip it without redownloading.
-- If the user asked to download/summarize the current first N favorite videos, download video resources for all non-entertainment target video items before writing the final answer.
-- Always classify `影音与娱乐` before media download and keep only a manifest record with `status: "skipped_entertainment"` unless the user explicitly asks to preserve entertainment assets too.
-- If `yt-dlp` cannot download a private/favorite video, keep the URL and metadata in the manifest. If the log says fresh cookies are needed, request explicit user approval before reading/exporting cookies and prefer `--cookies-from-browser chrome` or another browser profile that is logged in to Douyin.
-- If no subtitle/transcript exists and no transcription backend is configured, still keep the downloaded video/audio asset, create a Markdown note with metadata and local media links, and clearly state that transcription is unavailable.
-- Signed Douyin detail URLs are fragile. Use only exact `aweme_id` matches and process them immediately after the browser observes them. A `200` response with zero bytes means the URL/signature is unusable outside that browser context and must be refreshed or collected from a debuggable browser session.
-- If CDP starts after the detail response has already completed, reuse the loaded tab and refetch the signed detail resource from `performance` entries inside that authenticated page context. Keep the signed URL out of logs.
-- Start the debuggable Chrome session only after explicit user approval. Use an isolated temporary profile, avoid printing cookies or signed URLs, close Chrome when capture finishes, and delete the temporary profile after the workflow completes if the user approved cleanup.
-- Treat `--use-openai` as a data-transfer action. It can send audio and transcript content from the user's Douyin favorites to OpenAI, so require explicit user approval before running it.
-- Respect platform terms and the user's account boundaries. Only process videos from the user's authenticated session and local files requested by the user.
+or simply ask Codex to use `review-summarizer` for the manifest.
