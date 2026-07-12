@@ -38,7 +38,52 @@ Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/
 Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json
 ```
 
-5. Run the normal `yt-dlp` path first:
+5. Run the CDP detail-capture path first. Ask for approval to start an isolated debuggable Chrome; do not read existing Chrome cookies unless the user separately and explicitly approves that cookie access:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 \
+  --remote-allow-origins=http://127.0.0.1:9222 \
+  --user-data-dir="/Users/Admin/Documents/Obsidian Vault/.tmp/douyin-cdp-profile" \
+  "https://www.douyin.com/"
+```
+
+If the isolated Chrome profile is logged out, show the browser and let the user log in manually. If Douyin shows CAPTCHA, slider verification, QR confirmation, SMS/OTP, or another challenge, stop and wait for the user to complete it manually.
+
+Capture detail JSON:
+
+```bash
+PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
+  "Codex Skills/dy-faves-puller/scripts/cdp_capture_details.py" \
+  --favorites "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json" \
+  --output-dir "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-details" \
+  --port 9222 \
+  --timeout 45 \
+  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json"
+```
+
+If sandboxing blocks `127.0.0.1:9222`, rerun the same command with escalated permission. Do not print signed URLs.
+
+6. Process captured details into local media, local transcripts, staging draft notes, and the canonical manifest:
+
+```bash
+printf '# Netscape HTTP Cookie File\n' \
+  > "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/empty-cookies.txt"
+PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
+  "Codex Skills/dy-faves-puller/scripts/process_signed_details.py" \
+  --signed-details "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json" \
+  --cookies "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/empty-cookies.txt" \
+  --output "Wiki Library/raw/originals/douyin" \
+  --model "Wiki Library/raw/originals/douyin/models/ggml-base.bin" \
+  --transcribe-max-ms 0 \
+  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/run_manifest.json" \
+  --merge-manifest \
+  --keep-success
+```
+
+Use `--max-workers` or sub-agent sharding only for the local download/transcription stage. Workers should write shard manifests, and the parent should merge them into the canonical `run_manifest.json`.
+
+7. If the CDP path is unavailable or does not produce usable detail JSON/media for non-entertainment items, fall back to the normal `yt-dlp` path:
 
 ```bash
 python3 "Codex Skills/dy-faves-puller/scripts/process_favorites.py" \
@@ -50,7 +95,7 @@ python3 "Codex Skills/dy-faves-puller/scripts/process_favorites.py" \
 
 If this produces local media and transcripts, keep the manifest as the pull output. Do not run a summary model in this skill.
 
-6. If `yt-dlp` reports that fresh cookies are needed, ask for explicit permission before reading browser cookies. After approval, retry with a browser profile already logged in to Douyin:
+8. If the `yt-dlp` fallback reports that fresh cookies are needed, ask for explicit permission before reading browser cookies. After approval, retry with a browser profile already logged in to Douyin:
 
 ```bash
 python3 "Codex Skills/dy-faves-puller/scripts/process_favorites.py" \
@@ -61,9 +106,9 @@ python3 "Codex Skills/dy-faves-puller/scripts/process_favorites.py" \
   --cookies-from-browser chrome
 ```
 
-If this still fails to produce local MP4 files for non-entertainment video items, continue to the CDP fallback.
+If this still fails to produce local MP4 files for non-entertainment video items, report the unresolved items instead of creating summaries from page titles or visible text.
 
-7. For the CDP fallback, first ask for approval to export existing Chrome Douyin cookies:
+9. If CDP login is unavailable and the user explicitly prefers cookie export, ask for approval to export existing Chrome Douyin cookies:
 
 ```bash
 yt-dlp \
@@ -95,40 +140,7 @@ PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
   --url "https://www.douyin.com/"
 ```
 
-Capture detail JSON:
-
-```bash
-PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
-  "Codex Skills/dy-faves-puller/scripts/cdp_capture_details.py" \
-  --favorites "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json" \
-  --output-dir "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-details" \
-  --port 9222 \
-  --timeout 45 \
-  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json"
-```
-
-If sandboxing blocks `127.0.0.1:9222`, rerun the same command with escalated permission. Do not print signed URLs.
-
-8. Process captured details into local media, local transcripts, staging draft notes, and the canonical manifest:
-
-```bash
-printf '# Netscape HTTP Cookie File\n' \
-  > "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/empty-cookies.txt"
-PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
-  "Codex Skills/dy-faves-puller/scripts/process_signed_details.py" \
-  --signed-details "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json" \
-  --cookies "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/empty-cookies.txt" \
-  --output "Wiki Library/raw/originals/douyin" \
-  --model "Wiki Library/raw/originals/douyin/models/ggml-base.bin" \
-  --transcribe-max-ms 0 \
-  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/run_manifest.json" \
-  --merge-manifest \
-  --keep-success
-```
-
-Use `--max-workers` or sub-agent sharding only for the local download/transcription stage. Workers should write shard manifests, and the parent should merge them into the canonical `run_manifest.json`.
-
-9. Verify the local-source pull:
+10. Verify the local-source pull:
 
 ```bash
 python3 - <<'PY'
@@ -154,7 +166,7 @@ print("Douyin local pull verified.")
 PY
 ```
 
-10. Report the manifest path and stop. If the user wants summaries next, invoke `review-summarizer` with that manifest.
+11. Report the manifest path and stop. If the user wants summaries next, invoke `review-summarizer` with that manifest.
 
 ## Rules
 

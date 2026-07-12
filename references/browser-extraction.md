@@ -53,13 +53,15 @@ If the returned list is empty but the page visibly shows favorites, inspect the 
 
 ## CDP Detail Capture
 
-Use this when `yt-dlp` cannot produce local MP4 files, including after `--cookies-from-browser chrome`. Do not replace this with page-title or visible-text summaries; the CDP path is what turns browser-visible non-entertainment videos into local video resources. Entertainment items are still classified and skipped before media download.
+Use this as the preferred detail/media path after collecting favorite URLs. Do not replace this with page-title or visible-text summaries; the CDP path is what turns browser-visible non-entertainment videos into local video resources. Entertainment items are still classified and skipped before media download.
 
 The captured detail response is the canonical source for engagement metadata and hashtags. Preserve `aweme.statistics` as `likes`, `comments`, `favorites`, and `shares`; preserve structured `text_extra` hashtags and hashtags in `desc` as final note `tags`. Do this before final summary rewriting, not as a later repair step.
 
 Use this only after the user explicitly approves launching a debuggable browser.
 
-Preferred authentication path: ask for permission to read existing Chrome Douyin cookies, then export them into the pull record:
+Preferred authentication path: start an isolated Chrome profile and let the user log in manually when needed. Do not read existing Chrome cookies unless the user separately and explicitly approves that cookie access.
+
+Cookie export is optional fallback, not the default. If the isolated Chrome profile cannot be logged in and the user explicitly prefers existing Chrome cookie export, ask for permission to read existing Chrome Douyin cookies, then export them into the pull record:
 
 ```bash
 yt-dlp \
