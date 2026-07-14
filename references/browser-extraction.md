@@ -6,10 +6,14 @@ Use this after the user has logged in to Douyin in the in-app browser and the cu
 
 Run a browser-side read-only extraction with the in-app browser's Playwright API. Save the returned array as:
 
-`Douyin Favorites/拉取记录/<pull-id>/json/favorites_urls.json`
+`Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json`
 
 ```js
-const favorites = await tab.playwright.evaluate(async (limit) => {
+const favorites = await tab.playwright.evaluate(async (options) => {
+  const limit = options?.limit ?? 50;
+  const maxRounds = options?.maxRounds ?? Math.max(20, Math.ceil(limit / 8) + 8);
+  const stopAfterStable = options?.stopAfterStable ?? 6;
+  const delayMs = options?.delayMs ?? 900;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const normalize = (href) => {
     try {
@@ -25,8 +29,8 @@ const favorites = await tab.playwright.evaluate(async (limit) => {
     const anchors = Array.from(document.querySelectorAll("a[href]"));
     return anchors
       .map((a) => {
-        const href = normalize(a.getAttribute("href") || "");
-        const text = (a.innerText || a.textContent || "").trim();
+        const href = normalize(a.getAttribute("href") || a.href || "");
+        const text = (a.innerText || a.textContent || "").trim().replace(/\s+/g, " ");
         const imgAlt = Array.from(a.querySelectorAll("img[alt]"))
           .map((img) => img.getAttribute("alt"))
           .filter(Boolean)
@@ -35,25 +39,44 @@ const favorites = await tab.playwright.evaluate(async (limit) => {
       })
       .filter((item) => /douyin\.com\/(video|note)\//.test(item.url));
   };
+  const getScrollContainer = () => {
+    const candidates = Array.from(document.querySelectorAll("body, main, div, section"))
+      .filter((el) => (el.scrollHeight || 0) > (el.clientHeight || 0) + 300)
+      .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+    return candidates[0] || document.scrollingElement || document.documentElement;
+  };
 
   const seen = new Map();
-  for (let round = 0; round < 8 && seen.size < limit; round += 1) {
+  let stableRounds = 0;
+  let previousCount = -1;
+  for (let round = 0; round < maxRounds && seen.size < limit; round += 1) {
     for (const item of readLinks()) {
       if (!seen.has(item.url)) seen.set(item.url, item);
       if (seen.size >= limit) break;
     }
+    stableRounds = seen.size === previousCount ? stableRounds + 1 : 0;
+    if (stableRounds >= stopAfterStable) break;
+    previousCount = seen.size;
+
+    const scroller = getScrollContainer();
+    const distance = Math.max(600, Math.floor((scroller.clientHeight || window.innerHeight) * 0.9));
+    scroller.scrollBy(0, distance);
     window.scrollBy(0, Math.floor(window.innerHeight * 0.9));
-    await sleep(900);
+    await sleep(delayMs);
+  }
+  for (const item of readLinks()) {
+    if (!seen.has(item.url)) seen.set(item.url, item);
+    if (seen.size >= limit) break;
   }
   return Array.from(seen.values()).slice(0, limit);
-}, 10, { timeoutMs: 20000 });
+}, { limit: 42, maxRounds: 40, stopAfterStable: 6, delayMs: 900 }, { timeoutMs: 60000 });
 ```
 
-If the returned list is empty but the page visibly shows favorites, inspect the current DOM for updated Douyin link patterns and update the `/(video|note)/` filter. Do not scrape broad page state repeatedly; use one focused extraction pass after each scroll/navigation attempt.
+If the returned list is shorter than requested while the page visibly has more favorites, inspect whether Douyin changed the link pattern or the scroll container. Prefer one focused extraction pass that scrolls the dominant internal list container and accumulates unique URLs; avoid broad repeated page-state scraping.
 
 ## CDP Detail Capture
 
-Use this as the preferred detail/media path after collecting favorite URLs. Do not replace this with page-title or visible-text summaries; the CDP path is what turns browser-visible non-entertainment videos into local video resources. Entertainment items are still classified and skipped before media download.
+Use this as the preferred detail/media path after collecting favorite URLs. Skip `/note/` image-text items before detail capture; they should be recorded as `skipped_note`, not opened for media capture. Do not replace this with page-title or visible-text summaries; the CDP path is what turns browser-visible non-entertainment videos into local video resources. Entertainment items are still classified and skipped before media download.
 
 The captured detail response is the canonical source for engagement metadata and hashtags. Preserve `aweme.statistics` as `likes`, `comments`, `favorites`, and `shares`; preserve structured `text_extra` hashtags and hashtags in `desc` as final note `tags`. Do this before final summary rewriting, not as a later repair step.
 
@@ -97,7 +120,7 @@ PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
 
 If export/injection is unavailable, or the temporary Chrome is still logged out, show the browser and let the user log in manually. If Douyin shows a verification/challenge page after cookie injection or login, such as CAPTCHA, slider verification, QR confirmation, SMS/OTP prompt, or another risk-control check, stop and tell the user to complete verification in that visible Chrome window. Resume capture only after the user confirms verification is complete.
 
-Capture detail responses for all first-10 favorites from the current pull record. If the script is blocked from connecting to `127.0.0.1:9222` by sandboxing, rerun the same command with escalated permission:
+Capture detail responses for video favorites from the current pull record; `/note/` image-text items are skipped and recorded as `skipped_note`. If the script is blocked from connecting to `127.0.0.1:9222` by sandboxing, rerun the same command with escalated permission:
 
 ```bash
 PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \

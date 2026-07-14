@@ -32,7 +32,7 @@ It must not write candidate summaries to `Wiki Library/raw/review/current/`. Sta
 Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/
 ```
 
-4. Collect the first requested favorite `video` or `note` links from the authenticated page. Use `references/browser-extraction.md` and save:
+4. Collect the first requested favorite `video` or `note` links from the authenticated page. Keep `note` links only so their position can be recorded; `note`/image-text items must be skipped before detail capture or media processing. Use `references/browser-extraction.md` and save:
 
 ```bash
 Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json
@@ -64,7 +64,7 @@ PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
 
 If sandboxing blocks `127.0.0.1:9222`, rerun the same command with escalated permission. Do not print signed URLs.
 
-6. Process captured details into local media, local transcripts, staging draft notes, and the canonical manifest:
+6. Process captured details into local media, local transcripts, staging draft notes, and the canonical manifest. `note`/image-text records should remain `skipped_note` and must not produce media, transcripts, or staging notes:
 
 ```bash
 printf '# Netscape HTTP Cookie File\n' \
@@ -147,11 +147,11 @@ python3 - <<'PY'
 import json, pathlib, subprocess
 m = json.load(open("Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/run_manifest.json", encoding="utf-8"))
 for item in m:
-    if item.get("status") == "skipped_entertainment":
+    if item.get("status") in {"skipped_entertainment", "skipped_note"}:
         if item.get("video") or item.get("audio") or item.get("transcript"):
             raise SystemExit(f"Entertainment item has media assets: {item.get('index')}")
         continue
-    if item.get("status") not in {"ok", "note_only", "already_processed"}:
+    if item.get("status") not in {"ok", "note_only", "already_processed", "skipped_note"}:
         raise SystemExit(f"Unresolved item status: {item.get('index')} {item.get('status')}")
     video_value = item.get("video")
     if item.get("content_type") != "note" and video_value:
@@ -170,6 +170,7 @@ PY
 
 ## Rules
 
+- Douyin `note`/image-text items are skipped before detail capture or media download. Record them as `skipped_note`; do not create local media, transcripts, or staging notes for them.
 - Entertainment items are skipped before media download unless the user explicitly asks to keep them. Examples: `相声`, `曲艺`, `影视`, `美剧`, `电影`, `剧集`, `追剧`, `综艺`, `脱口秀`, `说唱`, `音乐`, `歌曲`, `MV`, `演出`.
 - The captured detail JSON is the canonical source for statistics, tags, duration, source URL, aweme ID, source title, and media URLs.
 - Do not create final notes from page titles or visible page text alone.

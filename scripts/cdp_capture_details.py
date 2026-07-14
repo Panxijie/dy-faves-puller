@@ -83,9 +83,17 @@ def close_tab(port: int, tab: dict) -> None:
 
 def capture_one(port: int, item: dict, index: int, output_dir: Path, timeout: int) -> dict:
     source_url = item["url"]
+    title = item.get("title") or source_url
+    if "/note/" in source_url:
+        return {
+            "index": index,
+            "source_url": source_url,
+            "title": title,
+            "status": "skipped_note",
+            "skip_reason": "Douyin note/image-text items are skipped by this skill.",
+        }
     aweme_id = re.search(r"/(?:video|note)/(\d+)", source_url)
     aweme_id = aweme_id.group(1) if aweme_id else ""
-    title = item.get("title") or source_url
     prefix = f"{index:02d}-{slugify(title, f'douyin-{index:02d}')}"
     tab = existing_tab(port, source_url)
     reuse_loaded_tab = bool(tab)

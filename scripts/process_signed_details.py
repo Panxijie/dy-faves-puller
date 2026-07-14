@@ -200,7 +200,7 @@ def write_note(path: Path, meta: dict, summary: str, transcript: str) -> None:
 
 
 def should_record_aweme_id(result: dict) -> bool:
-    return result.get("status") in {"ok", "note_only", "skipped_entertainment", "already_processed"}
+    return result.get("status") in {"ok", "note_only", "skipped_entertainment", "skipped_note", "already_processed"}
 
 
 def process_item(
@@ -220,6 +220,13 @@ def process_item(
     result = {"index": idx, "source_url": item.get("source_url"), "title": title}
     if item_aweme_id:
         result["aweme_id"] = item_aweme_id
+    if "/note/" in (item.get("source_url") or ""):
+        result.update({
+            "status": "skipped_note",
+            "skip_reason": "Douyin note/image-text items are skipped by this skill.",
+        })
+        print(f"[{idx}] skipped note", flush=True)
+        return result
     print(f"[{idx}] processing", flush=True)
     try:
         if item_aweme_id and item_aweme_id in processed_aweme_ids:
