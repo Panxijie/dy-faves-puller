@@ -25,23 +25,41 @@ const favorites = await tab.playwright.evaluate(async (options) => {
       return "";
     }
   };
+  const isFavoriteUrl = (href) => /douyin\.com\/(video|note)\//.test(normalize(href));
+  const markerElement = () => Array.from(document.querySelectorAll("input, textarea, div, span"))
+    .find((el) => ((el.getAttribute("placeholder") || el.textContent || "").trim()).includes("搜索你收藏的作品"));
+  const inFooterOrHeader = (el) => Boolean(el.closest("footer, [role='contentinfo'], header, [role='banner']"));
+  const afterMarkerBeforeFooter = (el, marker) => {
+    if (!marker) return false;
+    const position = marker.compareDocumentPosition(el);
+    if (!(position & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+    return !inFooterOrHeader(el);
+  };
   const readLinks = () => {
-    const anchors = Array.from(document.querySelectorAll("a[href]"));
-    return anchors
-      .map((a) => {
-        const href = normalize(a.getAttribute("href") || a.href || "");
-        const text = (a.innerText || a.textContent || "").trim().replace(/\s+/g, " ");
-        const imgAlt = Array.from(a.querySelectorAll("img[alt]"))
-          .map((img) => img.getAttribute("alt"))
-          .filter(Boolean)
-          .join(" ");
-        return { url: href, title: text || imgAlt, source: location.href };
-      })
-      .filter((item) => /douyin\.com\/(video|note)\//.test(item.url));
+    const marker = markerElement();
+    if (!marker) return [];
+    const anchors = Array.from(document.querySelectorAll("a[href]")).filter((a) => {
+      if (!isFavoriteUrl(a.getAttribute("href") || a.href || "")) return false;
+      if (!afterMarkerBeforeFooter(a, marker)) return false;
+      // Favorite cards have visible card text or a thumbnail. This excludes footer/hot links
+      // that can share the same video URL pattern outside the collection list.
+      return (a.innerText || a.textContent || "").trim() || a.querySelector("img, video");
+    });
+    return anchors.map((a) => {
+      const href = normalize(a.getAttribute("href") || a.href || "");
+      const text = (a.innerText || a.textContent || "").trim().replace(/\s+/g, " ");
+      const imgAlt = Array.from(a.querySelectorAll("img[alt]"))
+        .map((img) => img.getAttribute("alt"))
+        .filter(Boolean)
+        .join(" ");
+      return { url: href, title: text || imgAlt, source: location.href };
+    });
   };
   const getScrollContainer = () => {
+    const marker = markerElement();
     const candidates = Array.from(document.querySelectorAll("body, main, div, section"))
       .filter((el) => (el.scrollHeight || 0) > (el.clientHeight || 0) + 300)
+      .filter((el) => !marker || el.contains(marker))
       .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
     return candidates[0] || document.scrollingElement || document.documentElement;
   };
@@ -61,7 +79,6 @@ const favorites = await tab.playwright.evaluate(async (options) => {
     const scroller = getScrollContainer();
     const distance = Math.max(600, Math.floor((scroller.clientHeight || window.innerHeight) * 0.9));
     scroller.scrollBy(0, distance);
-    window.scrollBy(0, Math.floor(window.innerHeight * 0.9));
     await sleep(delayMs);
   }
   for (const item of readLinks()) {
@@ -72,7 +89,7 @@ const favorites = await tab.playwright.evaluate(async (options) => {
 }, { limit: 42, maxRounds: 40, stopAfterStable: 6, delayMs: 900 }, { timeoutMs: 60000 });
 ```
 
-If the returned list is shorter than requested while the page visibly has more favorites, inspect whether Douyin changed the link pattern or the scroll container. Prefer one focused extraction pass that scrolls the dominant internal list container and accumulates unique URLs; avoid broad repeated page-state scraping.
+If the returned list is shorter than requested while the page visibly has more favorites, inspect whether Douyin changed the link pattern or the scroll container. Do not fall back to a whole-page `a[href]` sweep: footer, hot-topic, recommendation, and page-cache links can share `/video/` or `/note/` URL patterns and contaminate the pull. Prefer one focused extraction pass bounded by the favorite-list marker `搜索你收藏的作品`, then scroll the dominant internal list container and accumulate unique URLs.
 
 ## CDP Detail Capture
 
