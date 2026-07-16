@@ -168,6 +168,14 @@ PY
 
 11. Report the manifest path and stop. If the user wants summaries next, invoke `review-summarizer` with that manifest.
 
+## Progress Updates
+
+For long media download, audio extraction, and transcription runs, report progress about every 30 seconds. Base progress on local file counts, directory sizes, and manifest status counts; do not print signed URLs, cookies, or raw download commands. If command output is silenced to avoid leaking signed URLs, say so. When progress appears stalled, infer the bottleneck from local artifacts first: MP4 only means audio extraction may still be pending; MP4+WAV without a transcript usually means transcription is running or stuck; transcript without a manifest update usually means writeback is pending. If one long video blocks later items, continue the later items with `--indices`, `--merge-manifest`, and `--keep-success`.
+
+## Complete Transcripts
+
+Full transcription is the default output; capped transcripts are not final. Use `--transcribe-max-ms 0`, or run `whisper-cli` directly on the full WAV. Only create a capped transcript as a temporary measure when a long video blocks the whole batch; clearly mark it as partial and later rerun full transcription. If a partial transcript already exists, rename it with a suffix such as `.partial-180s.txt` before retrying, because the processing script reuses existing non-empty transcript files. After completion, verify that the final transcript reaches the end of the video, and update any run report that previously described the item as partially transcribed.
+
 ## Rules
 
 - Douyin `note`/image-text items are skipped before detail capture or media download. Record them as `skipped_note`; do not create local media, transcripts, or staging notes for them.
