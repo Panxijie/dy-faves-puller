@@ -50,6 +50,8 @@ Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json
 
 If the isolated Chrome profile is logged out, show the browser and let the user log in manually. If Douyin shows CAPTCHA, slider verification, QR confirmation, SMS/OTP, or another challenge, stop and wait for the user to complete it manually.
 
+After launching isolated Chrome, wait 3 seconds and inspect its page titles or visible state. If a Douyin verification page (for example, a `verifycenter` CAPTCHA/slider/QR/SMS/OTP prompt) is still active and blocks the authenticated session, show the Chrome window and clearly tell the user that manual verification is required before continuing. Otherwise continue automatically. A stale verification tab may remain after authenticated detail capture succeeds; do not request another manual verification unless a challenge actually blocks capture.
+
 Capture detail JSON:
 
 ```bash
