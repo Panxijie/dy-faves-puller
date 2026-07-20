@@ -121,7 +121,7 @@ Start an isolated Chrome profile with a loopback-only debugging port and an allo
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
   --remote-allow-origins=http://127.0.0.1:9222 \
-  --user-data-dir="/Users/Admin/Documents/Obsidian Vault/.tmp/douyin-cdp-profile" \
+  --user-data-dir="${TMPDIR:-/tmp}/douyin-cdp-profile" \
   "https://www.douyin.com/"
 ```
 

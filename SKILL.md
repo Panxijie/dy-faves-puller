@@ -44,7 +44,7 @@ Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
   --remote-allow-origins=http://127.0.0.1:9222 \
-  --user-data-dir="/Users/Admin/Documents/Obsidian Vault/.tmp/douyin-cdp-profile" \
+  --user-data-dir="${TMPDIR:-/tmp}/douyin-cdp-profile" \
   "https://www.douyin.com/"
 ```
 
@@ -128,7 +128,7 @@ Then ask for approval to start an isolated debuggable Chrome:
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
   --remote-allow-origins=http://127.0.0.1:9222 \
-  --user-data-dir="/Users/Admin/Documents/Obsidian Vault/.tmp/douyin-cdp-profile" \
+  --user-data-dir="${TMPDIR:-/tmp}/douyin-cdp-profile" \
   "https://www.douyin.com/"
 ```
 
