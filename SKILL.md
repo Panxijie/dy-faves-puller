@@ -32,7 +32,7 @@ It must not write candidate summaries to `Wiki Library/raw/review/current/`. Sta
 Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/
 ```
 
-4. Collect the first requested favorite `video` or `note` links from the authenticated page. Keep `note` links only so their position can be recorded; `note`/image-text items must be skipped before detail capture or media processing. Use `references/browser-extraction.md` and save:
+4. Collect the first requested favorite `video` or `note` links from the authenticated page. Keep `note` links only so their position can be recorded; `note`/image-text items must be skipped before detail capture or media processing. If the initially loaded cards are fewer than the requested count, scroll the favorite-list container and continue accumulating unique links. Stop as soon as the requested count is reached; do not scroll to the bottom merely to prove that more items exist. Only report a shortfall after the list itself indicates that there are no more items (or bounded stability checks show no new cards). Use `references/browser-extraction.md` and save:
 
 ```bash
 Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/favorites_urls.json
@@ -172,9 +172,7 @@ PY
 
 ## Progress Updates
 
-For long media download, audio extraction, and transcription runs, report progress about every 30 seconds. Base progress on local file counts, directory sizes, and manifest status counts; do not print signed URLs, cookies, or raw download commands. If command output is silenced to avoid leaking signed URLs, say so. When progress appears stalled, infer the bottleneck from local artifacts first: MP4 only means audio extraction may still be pending; MP4+WAV without a transcript usually means transcription is running or stuck; transcript without a manifest update usually means writeback is pending. If one long video blocks later items, continue the later items with `--indices`, `--merge-manifest`, and `--keep-success`.
-
-If the user asks for periodic progress updates, create a heartbeat automation attached to the current Codex thread. Unless the user specifies another interval, check and report every 3 minutes. The heartbeat should read the current pull's `run_manifest.json` and relevant local processing processes, then report completed count, status counts, current item or stage, and any errors without exposing signed URLs, cookies, or raw download commands. When every requested item has reached an allowed final status and local-media verification succeeds, report completion and delete the heartbeat automation. Do not leave a stale automation running after completion, cancellation, or a materially changed pull scope.
+When a pull starts, immediately create a heartbeat automation attached to the current Codex thread. Check and report every 10 minutes unless the user specifies another interval. The heartbeat should read the current pull's `run_manifest.json` and relevant local processing processes, then report completed count, status counts, current item or stage, and any errors without exposing signed URLs, cookies, or raw download commands. When every requested item has reached an allowed final status and local-media verification succeeds, report completion and delete the heartbeat automation. Delete the heartbeat on cancellation or a materially changed pull scope; do not leave stale automations running. Base progress on local file counts, directory sizes, and manifest status counts. If command output is silenced to avoid leaking signed URLs, say so. When progress appears stalled, infer the bottleneck from local artifacts first: MP4 only means audio extraction may still be pending; MP4+WAV without a transcript usually means transcription is running or stuck; transcript without a manifest update usually means writeback is pending. If one long video blocks later items, continue the later items with `--indices`, `--merge-manifest`, and `--keep-success`.
 
 ## Complete Transcripts
 
