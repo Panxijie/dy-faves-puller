@@ -1,21 +1,21 @@
 # DY Faves Puller
 
-`dy-faves-puller` is a Codex skill for collecting a signed-in Douyin account's favorite or collection items into local source materials. It captures item URLs and detail data, downloads media when appropriate, produces local transcripts, and records each run in a manifest for later review.
+`dy-faves-puller` 是一个 Codex skill，用于将已登录抖音账号的收藏或合集内容采集为本地源材料。它会记录条目链接与详情数据，在适用时下载媒体、生成本地转录，并为每次拉取写入清单，供后续审阅使用。
 
-The skill stops at local evidence. It does not generate review summaries or publish notes; use a separate summarization workflow after a verified pull if needed.
+该 skill 的职责止于本地证据采集：不会生成审阅摘要或发布笔记。完成并验证拉取结果后，如有需要，请使用单独的摘要工作流。
 
-## Install
+## 安装
 
-Place this repository in Codex's skills directory (typically `~/.codex/skills/dy-faves-puller`) so that Codex can discover `SKILL.md`. The workflow expects access to an authenticated Douyin browser session and local tools such as Python, `yt-dlp`, `ffmpeg`, and optionally `whisper-cli`.
+将此仓库放入 Codex 的 skills 目录（通常为 `~/.codex/skills/dy-faves-puller`），以便 Codex 发现 `SKILL.md`。该工作流需要已登录的抖音浏览器会话，以及本地的 Python、`yt-dlp`、`ffmpeg`，并可选使用 `whisper-cli`。
 
-## Privacy and Safety
+## 隐私与安全
 
-This skill operates on the account session you explicitly authorize. Do not commit browser profiles, exported cookies, signed media URLs, downloaded media, transcripts, pull manifests, or API keys. The repository's `.gitignore` excludes these local artifacts by default.
+该 skill 只会使用你明确授权的账号会话。不要提交浏览器配置、导出的 Cookie、签名媒体链接、下载的媒体、转录文本、拉取清单或 API 密钥。仓库的 `.gitignore` 默认会忽略这些本地文件。
 
-The skill uses an isolated Chrome profile for CDP capture and asks for explicit approval before accessing browser cookies. Complete login, CAPTCHA, QR, SMS, and other verification prompts manually.
+该 skill 使用隔离的 Chrome 配置进行 CDP 采集，并会在读取浏览器 Cookie 前请求明确授权。登录、验证码、二维码、短信及其他验证步骤需要由你手动完成。
 
-Only collect content from accounts and sources you are authorized to access, and comply with the applicable platform terms.
+请仅采集你有权访问的账号与内容，并遵守适用的平台条款。
 
-## License
+## 许可证
 
 [MIT](LICENSE)
