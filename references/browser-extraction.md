@@ -195,4 +195,4 @@ for item in m:
 PY
 ```
 
-Close Chrome after capture and processing. Delete the temporary profile and exported cookie file after successful completion only when the user has approved that cleanup.
+Close the isolated debuggable Chrome as soon as detail capture for all requested items is complete and local media processing has started. The browser is needed for authenticated detail capture, but downloads and transcription continue from the captured details and do not require Chrome to remain open. Do not wait for downloads or transcription to finish before closing it. Delete the temporary profile and exported cookie file after successful completion only when the user has approved that cleanup.

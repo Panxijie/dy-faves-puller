@@ -85,6 +85,8 @@ PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
 
 Use `--max-workers` or sub-agent sharding only for the local download/transcription stage. Workers should write shard manifests, and the parent should merge them into the canonical `run_manifest.json`.
 
+After detail capture has completed for every requested item and local media processing has started, close the isolated debuggable Chrome. It is needed to capture authenticated detail JSON; it is not needed once those details are captured and media downloads have started. Do not wait for downloads or transcription to finish before closing Chrome.
+
 7. If the CDP path is unavailable or does not produce usable detail JSON/media for non-entertainment items, fall back to the normal `yt-dlp` path:
 
 ```bash
@@ -187,7 +189,7 @@ Full transcription is the default output; capped transcripts are not final. Use 
 - Do not call `summarize_notes_with_model.py`, `organize_content_library.py`, or any chat-completion summary API from this skill.
 - Do not promote review notes into `Wiki Library/wiki/` from this skill.
 - Keep cookies and signed URLs private. Never print them.
-- Start debuggable Chrome only after explicit user approval, use an isolated temporary profile, close it after capture, and delete the temporary profile only after the user approves cleanup.
+- Start debuggable Chrome only after explicit user approval and use an isolated temporary profile. Close it as soon as detail capture for all requested items is complete and media processing has started; do not keep it open for downloads or transcription. Delete the temporary profile only after the user approves cleanup.
 - Respect platform terms and the user's account boundaries. Only process videos from the user's authenticated session and local files requested by the user.
 
 ## Required Tools
