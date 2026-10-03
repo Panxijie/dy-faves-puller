@@ -61,8 +61,11 @@ PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
   --output-dir "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-details" \
   --port 9222 \
   --timeout 45 \
-  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json"
+  --manifest "Wiki Library/raw/originals/douyin/pulls/<pull-id>/json/cdp-capture-manifest.json" \
+  --dedupe-output "Wiki Library/raw/originals/douyin"
 ```
+
+Before opening a detail page, `cdp_capture_details.py` extracts the aweme ID from the favorite URL and checks the processed-ID registry plus prior pull manifests. If it finds a prior processed item, it records `already_processed` and skips the CDP page capture. This prevents spending time capturing detail JSON for URLs whose ID is already present in the favorites link. `process_signed_details.py` must preserve that status and skip media work. For older manifest paths, resolve both vault-root-relative values and the historical `Wiki Library/...` form.
 
 If sandboxing blocks `127.0.0.1:9222`, rerun the same command with escalated permission. Do not print signed URLs.
 
@@ -82,6 +85,8 @@ PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
   --merge-manifest \
   --keep-success
 ```
+
+Duplicate handling is mandatory before media download: after reading each captured detail's `aweme_id`, check `registry/aweme_ids.txt` and prior pull manifests. A prior manifest entry only counts as reusable when its note and required media/transcript files still exist. Resolve saved relative paths against both the vault root and the historical `Wiki Library/`-prefixed form; do not rely on the current shell directory. Reuse verified local paths and mark the item `already_processed`; do not download the video or regenerate its transcript. If the ID is in the registry but its old files are missing, preserve the existing deleted/rejected behavior and do not silently recreate it. The first requested-item URL/detail capture is still needed to identify IDs when the favorites list does not expose them.
 
 Use `--max-workers` or sub-agent sharding only for the local download/transcription stage. Workers should write shard manifests, and the parent should merge them into the canonical `run_manifest.json`.
 
@@ -144,7 +149,14 @@ PYTHONPATH=".tmp/pydeps" PYTHONPYCACHEPREFIX=".tmp/pycache" python3 \
   --url "https://www.douyin.com/"
 ```
 
-10. Verify the local-source pull:
+10. Recover media-processing errors before final verification:
+
+- Wait for the media worker to exit and inspect both its exit status and `run_manifest.json`; a zero exit code does not make `error` entries complete.
+- For each `error` item with a valid captured `detail_json`, inspect its local files and sanitized error type, then retry only those indices with `process_signed_details.py --indices ... --merge-manifest --keep-success`. Keep the empty cookie file unless a specific failure requires an explicitly approved cookie action. Do not rerun successful indices or start overlapping workers.
+- Allow at most two targeted retry rounds per failed item. After each round, re-read the manifest and check whether video, audio, and full transcript files exist and are non-empty. If a retry succeeds, verify the video with `ffprobe`.
+- If the captured detail is missing or unusable, follow the relevant capture or authentication fallback above. Stop for manual verification or explicit approval when required. If an item still fails after the bounded retries, report its index, sanitized failure type, and missing artifacts; do not report the pull as complete.
+
+11. Verify the local-source pull:
 
 ```bash
 python3 - <<'PY'
@@ -170,11 +182,11 @@ print("Douyin local pull verified.")
 PY
 ```
 
-11. Report the manifest path and stop. If the user wants summaries next, invoke `review-summarizer` with that manifest.
+12. Report the manifest path and stop. If the user wants summaries next, invoke `review-summarizer` with that manifest.
 
 ## Progress Updates
 
-Create a heartbeat automation attached to the current Codex thread only after detail capture for every requested item has completed and the media-download process has started. Check and report every 10 minutes unless the user specifies another interval. Immediately after confirming the heartbeat was created, end the current response: do not poll the processing job, wait for it, or send further in-turn progress updates. Subsequent progress, failures, and completion are reported only by the heartbeat, unless the user sends a new request. The heartbeat should read the current pull's `run_manifest.json` and relevant local processing processes, then report completed count, status counts, current item or stage, and any errors without exposing signed URLs, cookies, or raw download commands. When every requested item has reached an allowed final status and local-media verification succeeds, report completion and delete the heartbeat automation. Delete the heartbeat on cancellation or a materially changed pull scope; do not leave stale automations running. Base progress on local file counts, directory sizes, and manifest status counts. If command output is silenced to avoid leaking signed URLs, say so. When progress appears stalled, infer the bottleneck from local artifacts first: MP4 only means audio extraction may still be pending; MP4+WAV without a transcript usually means transcription is running or stuck; transcript without a manifest update usually means writeback is pending. If one long video blocks later items, continue the later items with `--indices`, `--merge-manifest`, and `--keep-success`.
+Create a heartbeat automation attached to the current Codex thread only after detail capture for every requested item has completed and the media-download process has started. Check and report every 10 minutes unless the user specifies another interval. The heartbeat is read-only: it observes the manifest, worker, local files, and sanitized log markers, but never starts work or edits the manifest. Do not treat the heartbeat as the recovery owner. Before ending the active response, ensure a durable process is responsible for completing the media run and its bounded failed-index retries; a plain worker that can exit with unresolved errors is insufficient. If no durable recovery process is available, keep the pull active and perform the bounded recovery in the main task before reporting completion. Once that recovery owner is running, end the current response and leave subsequent progress, failures, and completion to the heartbeat unless the user sends a new request. Reports must include completed count, status counts, current item or stage, sanitized error type, retry round, and elapsed time without exposing signed URLs, cookies, or raw download commands. When every requested item has reached an allowed final status and local-media verification succeeds, report completion and delete the heartbeat automation. Delete the heartbeat on cancellation or a materially changed pull scope; do not leave stale automations running. Base progress on local file counts, directory sizes, and manifest status counts. If command output is silenced to avoid leaking signed URLs, say so. When progress appears stalled, infer the bottleneck from local artifacts first: MP4 only means audio extraction may still be pending; MP4+WAV without a transcript usually means transcription is running or stuck; transcript without a manifest update usually means writeback is pending. For errors or missing artifacts, use the recovery procedure above instead of merely reporting an unchanged failure. If one long video blocks later items, continue the later items with `--indices`, `--merge-manifest`, and `--keep-success`.
 
 ## Complete Transcripts
 

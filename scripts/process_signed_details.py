@@ -143,9 +143,9 @@ def existing_processed_entry(output: Path, aweme_id: str | None) -> dict | None:
             if item.get("aweme_id") != aweme_id or item.get("status") not in {"ok", "note_only", "already_processed"}:
                 continue
             required = ["note"]
-            if item.get("status") == "ok" and item.get("content_type") != "note":
+            if item.get("content_type") != "note":
                 required.extend(["video", "transcript"])
-            if all(item.get(key) and Path(item[key]).exists() for key in required):
+            if all(item.get(key) and resolve_manifest_path(item[key], output, manifest_path).exists() for key in required):
                 reused = {key: value for key, value in item.items() if key in {
                     "status", "detail_json", "video", "audio", "transcript", "note", "content_type",
                     "duration", "duration_ms", "note_title", "original_title", "category", "subcategory",
@@ -153,6 +153,33 @@ def existing_processed_entry(output: Path, aweme_id: str | None) -> dict | None:
                 reused["reused_from_manifest"] = str(manifest_path)
                 return reused
     return None
+
+
+def resolve_manifest_path(value: str | Path, output: Path, manifest_path: Path) -> Path:
+    """Resolve paths written by pull scripts from different working directories.
+
+    Historical manifests contain both vault-relative paths (``raw/...``) and
+    vault-folder-prefixed paths (``Wiki Library/raw/...``). The old plain
+    ``Path(value).exists()`` check silently missed the latter when the current
+    working directory was already the vault folder, allowing duplicate media
+    downloads despite a complete prior manifest.
+    """
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+
+    candidates = [Path.cwd() / path, manifest_path.parent / path]
+    resolved_output = output.resolve()
+    # output is normally <vault>/raw/originals/douyin.
+    if len(resolved_output.parents) >= 3:
+        vault_root = resolved_output.parents[2]
+        candidates.append(vault_root / path)
+        if path.parts and path.parts[0] == vault_root.name:
+            candidates.append(vault_root.parent / path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 def mark_previously_deleted(result: dict, output: Path, aweme_id: str | None) -> dict:
@@ -226,6 +253,11 @@ def process_item(
             "skip_reason": "Douyin note/image-text items are skipped by this skill.",
         })
         print(f"[{idx}] skipped note", flush=True)
+        return result
+    if item.get("status") == "already_processed":
+        result.update(item)
+        result["index"] = idx
+        print(f"[{idx}] already processed; media stage skipped", flush=True)
         return result
     print(f"[{idx}] processing", flush=True)
     try:

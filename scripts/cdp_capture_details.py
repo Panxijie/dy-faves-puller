@@ -12,6 +12,8 @@ from pathlib import Path
 
 import requests
 import websocket
+from note_metadata import extract_aweme_id, load_aweme_ids
+from process_signed_details import existing_processed_entry
 
 
 def slugify(value: str, fallback: str) -> str:
@@ -79,6 +81,30 @@ def close_tab(port: int, tab: dict) -> None:
         requests.get(f"http://127.0.0.1:{port}/json/close/{tab_id}", timeout=5)
     except requests.RequestException:
         pass
+
+
+def duplicate_capture_result(output: Path, item: dict, index: int, processed_ids: set[str]) -> dict | None:
+    source_url = str(item.get("url") or "")
+    if "/note/" in source_url:
+        return None
+    aweme_id = extract_aweme_id(source_url)
+    if not aweme_id or (aweme_id not in processed_ids and not existing_processed_entry(output, aweme_id)):
+        return None
+    prior = existing_processed_entry(output, aweme_id)
+    result = {
+        "index": index,
+        "source_url": source_url,
+        "title": item.get("title") or source_url,
+        "aweme_id": aweme_id,
+        "status": "already_processed",
+        "skip_reason": "aweme_id already exists in the processed registry or a prior pull manifest.",
+    }
+    if prior:
+        result.update(prior)
+        result.update({"index": index, "source_url": source_url, "aweme_id": aweme_id, "status": "already_processed"})
+    else:
+        result["manual_deleted"] = True
+    return result
 
 
 def capture_one(port: int, item: dict, index: int, output_dir: Path, timeout: int) -> dict:
@@ -207,16 +233,32 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=9222)
     parser.add_argument("--timeout", type=int, default=45)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--dedupe-output", type=Path, help="Douyin originals root containing the registry and prior pull manifests.")
     args = parser.parse_args()
 
     items = json.loads(args.favorites.read_text(encoding="utf-8"))
+    if args.dedupe_output:
+        output_root = args.dedupe_output
+    elif len(args.output_dir.resolve().parents) > 3:
+        output_root = args.output_dir.resolve().parents[3]
+    else:
+        parser.error("--dedupe-output is required when --output-dir is not under a standard pull json/cdp-details path")
+    processed_ids = load_aweme_ids(output_root)
     wanted = set(args.indices or range(1, len(items) + 1))
     results = []
     for index, item in enumerate(items, start=1):
         if index not in wanted:
             continue
-        print(f"[{index}] {item['url']}", flush=True)
-        results.append(capture_one(args.port, item, index, args.output_dir, args.timeout))
+        duplicate = duplicate_capture_result(output_root, item, index, processed_ids)
+        if duplicate:
+            print(f"[{index}] already processed; detail capture skipped", flush=True)
+            results.append(duplicate)
+        else:
+            print(f"[{index}] capturing detail", flush=True)
+            results.append(capture_one(args.port, item, index, args.output_dir, args.timeout))
+        aweme_id = extract_aweme_id(item.get("url"))
+        if aweme_id and "/note/" not in str(item.get("url") or ""):
+            processed_ids.add(aweme_id)
         if args.manifest:
             args.manifest.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.manifest:
